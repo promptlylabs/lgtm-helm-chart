@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.1.0
+version: 0.1.1
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -69,7 +69,7 @@ annotations:
     - name: support
       url: https://github.com/promptlylabs/lgtm-helm-chart/issues
   artifacthub.io/signKey: |
-    fingerprint: ""
+    fingerprint: "B0E0D6CBC8F4077B7A29568708FCD164BF5D41C8"
     url: https://promptlylabs.github.io/lgtm-helm-chart/pgp_keys.asc
   # No artifacthub.io/changes annotation: releases are mostly automated
   # (Renovate, ADR-0008) and a static changelog would go stale — GitHub
