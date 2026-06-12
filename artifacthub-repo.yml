@@ -1,0 +1,7 @@
+# Artifact Hub repository metadata file
+#
+# repositoryID is set by Artifact Hub after the repository is first
+# registered; add it here afterwards to claim ownership.
+owners:
+  - name: Dani
+    email: andre.gomes@promptlyhealth.com
