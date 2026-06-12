@@ -1,0 +1,204 @@
+# ── kube-prometheus-stack ─────────────────────────────────────────────────────
+# Prometheus Operator + a storage-only Prometheus (ADR-0005): OTLP-native
+# ingestion, scraping disabled (the OTel collectors own all collection),
+# exporters and Alertmanager disabled. Grafana comes from the standalone chart
+# (ADR-0003), not from this stack.
+# Upstream values: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+
+kube-prometheus-stack:
+  enabled: true
+
+  # The endpoint helpers in this chart derive the Prometheus service name from
+  # this override ("<fullnameOverride>-prometheus"). The literal remote-write
+  # URLs in the tempo block must be updated if you change it.
+  fullnameOverride: prom-stack
+
+  crds:
+    enabled: true
+
+  prometheusOperator:
+    enabled: true
+
+    # Right-sized from observed production usage. CPU: requests only (avoid
+    # throttling); memory: requests + limits (prevent OOM) — applies to every
+    # resources block in this chart's defaults.
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+    prometheusConfigReloader:
+      enableProbe: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 64Mi
+
+    admissionWebhooks:
+      enabled: true
+      certManager:
+        enabled: false
+      patch:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+
+    # observability scope: meta-monitoring, picked up by neither collector for
+    # now (node collector excludes labelled ServiceMonitors, cluster collector
+    # only takes scope=cluster).
+    serviceMonitor:
+      additionalLabels:
+        opentelemetry.io/scope: observability
+
+  prometheus:
+    enabled: true
+
+    serviceMonitor:
+      additionalLabels:
+        opentelemetry.io/scope: observability
+
+    prometheusSpec:
+      replicas: 1
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
+
+      # Retention
+      retention: "7d"
+      retentionSize: "10GB"
+
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 20Gi
+
+      # type-and-unit-labels: required with translationStrategy NoTranslation
+      # to prevent name collisions between metrics differing only by type/unit.
+      enableFeatures:
+        - type-and-unit-labels
+        - exemplar-storage
+
+      # OTLP ingestion: /api/v1/otlp/v1/metrics
+      enableOTLPReceiver: true
+      # Remote-write ingestion (Tempo metrics-generator): /api/v1/write
+      enableRemoteWriteReceiver: true
+
+      # CRITICAL: the otlp block must be explicitly set — when completely
+      # unset, defaults are not computed properly and OTLP metrics are
+      # silently rejected. https://github.com/prometheus/prometheus/issues/16688
+      otlp:
+        # Preserve OTel metric names 1:1 (system.cpu.time stays dotted).
+        # PromQL: quote the names — {"system.cpu.time"}.
+        translationStrategy: NoTranslation
+        # Promote OTel resource attributes to queryable labels.
+        # https://prometheus.io/docs/guides/opentelemetry/
+        promoteResourceAttributes:
+          - service.instance.id
+          - service.name
+          - service.namespace
+          - service.version
+          - cloud.availability_zone
+          - cloud.region
+          - container.name
+          - deployment.environment
+          - deployment.environment.name
+          - k8s.cluster.name
+          - k8s.container.name
+          - k8s.cronjob.name
+          - k8s.daemonset.name
+          - k8s.deployment.name
+          - k8s.job.name
+          - k8s.namespace.name
+          - k8s.node.name
+          - k8s.pod.name
+          - k8s.replicaset.name
+          - k8s.statefulset.name
+          # Volume attributes from kubeletstats (PVC storage dashboard)
+          - k8s.volume.name
+          - k8s.volume.type
+          - k8s.persistentvolumeclaim.name
+
+      # OTel collectors batch with variable delays — accept samples up to 30m
+      # out of order.
+      tsdb:
+        outOfOrderTimeWindow: 30m
+
+      walCompression: true
+
+      # Storage-only mode: selectors that never match. The OTel collectors do
+      # all ServiceMonitor/PodMonitor scraping via their target allocators.
+      serviceMonitorSelectorNilUsesHelmValues: true
+      podMonitorSelectorNilUsesHelmValues: true
+      ruleSelectorNilUsesHelmValues: false
+      serviceMonitorSelector:
+        matchLabels:
+          prometheus.io/scrape: "false-disabled"
+      podMonitorSelector:
+        matchLabels:
+          prometheus.io/scrape: "false-disabled"
+
+  # All alerting is Grafana-managed.
+  alertmanager:
+    enabled: false
+
+  # Grafana comes from the standalone grafana-community chart (ADR-0003).
+  grafana:
+    enabled: false
+
+  # Replaced by the OTel k8sclusterreceiver (cluster collector).
+  kubeStateMetrics:
+    enabled: false
+
+  # Replaced by the OTel hostmetricsreceiver (node collector).
+  nodeExporter:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+
+  windowsMonitoring:
+    enabled: false
+
+  # Default rules reference node-exporter/kube-state-metrics/cAdvisor metrics
+  # that don't exist in this OTel-native setup.
+  defaultRules:
+    create: false
+
+  # Scraped by the cluster collector (scope=cluster).
+  coreDns:
+    enabled: true
+    serviceMonitor:
+      additionalLabels:
+        opentelemetry.io/scope: cluster
+
+  kubeApiServer:
+    enabled: true
+    serviceMonitor:
+      additionalLabels:
+        opentelemetry.io/scope: cluster
+
+  # Managed control planes (AKS/EKS/GKE) don't expose these; kubelet metrics
+  # come from the kubeletstats receiver instead.
+  kubeControllerManager:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubelet:
+    enabled: false

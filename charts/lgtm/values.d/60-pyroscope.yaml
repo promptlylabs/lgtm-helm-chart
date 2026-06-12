@@ -1,0 +1,45 @@
+# ── Pyroscope (single binary, ADR-0004) ──────────────────────────────────────
+# Continuous profiling, one replica, local PVC, v2 storage (chart 2.x default).
+# Alloy is off until workloads expose pprof endpoints to scrape.
+# Upstream values: https://github.com/grafana/pyroscope/tree/main/operations/pyroscope/helm/pyroscope
+
+pyroscope:
+  enabled: true
+
+  pyroscope:
+    # The endpoint helpers in this chart derive the Pyroscope service name
+    # from this override.
+    fullnameOverride: pyroscope
+
+    replicaCount: 1
+
+    # Pyroscope profiles its own Go runtime — out-of-the-box profiling data.
+    disableSelfProfile: false
+
+    extraArgs:
+      log.level: info
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+    persistence:
+      enabled: true
+      size: 10Gi
+
+    service:
+      type: ClusterIP
+
+  # No workloads expose pprof endpoints yet; enable per cluster when apps are
+  # annotated for profiling.
+  alloy:
+    enabled: false
+
+  minio:
+    enabled: false
+
+  serviceMonitor:
+    enabled: false

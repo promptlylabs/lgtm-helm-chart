@@ -1,0 +1,103 @@
+# ── Loki (monolithic / single binary, ADR-0004) ──────────────────────────────
+# One StatefulSet, filesystem storage on a PVC, gateway and memcached caches
+# disabled — clients talk straight to loki:3100 (queries and OTLP ingest at
+# /otlp). Filesystem storage is chart-enforced to exactly 1 replica; switch to
+# object storage to scale (see examples/values-azure.yaml).
+# Upstream values: https://github.com/grafana-community/helm-charts/tree/main/charts/loki
+
+loki:
+  enabled: true
+
+  nameOverride: loki
+  # The endpoint helpers in this chart derive the Loki service name from this
+  # override. The literal OTEL_EXPORTER_OTLP_ENDPOINT below ties Loki's own
+  # trace export to the node collector's fixed service name.
+  fullnameOverride: loki
+
+  deploymentMode: Monolithic
+
+  loki:
+    # Single-tenant internal use.
+    auth_enabled: false
+
+    commonConfig:
+      replication_factor: 1
+
+    storage:
+      type: filesystem
+
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: loki_index_
+            period: 24h
+
+    # 7 days, matching Prometheus.
+    limits_config:
+      retention_period: 168h
+
+    compactor:
+      retention_enabled: true
+      delete_request_store: filesystem
+
+    # Loki injects traceIDs into its own structured logs (trace/log correlation).
+    tracing:
+      enabled: true
+
+  singleBinary:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 10Gi
+      # Chart defaults DELETE the data PVC when the StatefulSet is removed or
+      # scaled down — keep log data through helm uninstall/reinstall.
+      enableStatefulSetAutoDeletePVC: false
+      whenDeleted: Retain
+      whenScaled: Retain
+    # Loki's own traces go to the node collector (OTel SDK env vars; dskit
+    # reads them). Same-namespace short name — the collector CR name is fixed
+    # by this chart.
+    extraEnv:
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://otel-node-collector-collector:4318"
+      - name: OTEL_SERVICE_NAME
+        value: "loki"
+
+  # SimpleScalable components, off in monolithic mode.
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+  backend:
+    replicas: 0
+
+  # ADR-0004: nginx in front of one replica adds nothing — endpoints point at
+  # the loki service (:3100) directly.
+  gateway:
+    enabled: false
+
+  # Memcached caches: ~9 GiB of default memory reservations, not justified at
+  # this scale. Re-enable resultsCache first if query latency ever hurts.
+  chunksCache:
+    enabled: false
+  resultsCache:
+    enabled: false
+
+  test:
+    enabled: false
+  lokiCanary:
+    enabled: false
+
+  # Scraped by the node collector (no opentelemetry.io/scope label needed).
+  serviceMonitor:
+    enabled: true

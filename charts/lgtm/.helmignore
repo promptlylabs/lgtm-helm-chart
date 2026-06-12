@@ -1,0 +1,11 @@
+# Patterns to ignore when building the chart package.
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+# Source fragments — the packaged chart ships the assembled values.yaml only
+values.d/

@@ -1,0 +1,37 @@
+# ── Umbrella-owned, cross-cutting configuration ──────────────────────────────
+# Everything under `lgtm` is consumed by this chart's own templates
+# (collectors, Grafana datasources/dashboards) — never by the sub-charts.
+
+lgtm:
+  # Added as the `cluster` resource attribute on all telemetry when set.
+  # The shipped dashboards work with or without it; set it when more than one
+  # cluster reports into shared dashboards.
+  clusterName: ""
+
+  # Kubernetes cluster DNS domain, used when computing service FQDNs.
+  clusterDomain: cluster.local
+
+  # Cross-component endpoint overrides. Leave empty to let the chart compute
+  # them from the sub-charts' fullnameOverrides and the release namespace.
+  # Set explicitly only when a component lives outside this release (external
+  # Prometheus, relocated Loki via namespaceOverride, etc.).
+  endpoints:
+    prometheus: ""    # e.g. http://prom-stack-prometheus.observability.svc.cluster.local:9090
+    loki: ""          # e.g. http://loki.observability.svc.cluster.local:3100
+    tempoQuery: ""    # e.g. http://tempo.observability.svc.cluster.local:3200
+    tempoOtlpGrpc: ""  # e.g. tempo.observability.svc.cluster.local:4317
+    pyroscope: ""     # e.g. http://pyroscope.observability.svc.cluster.local:4040
+
+  # Grafana datasources (Prometheus/Loki/Tempo/Pyroscope with full trace/log/
+  # metric/profile correlations), provisioned via the datasources sidecar.
+  datasources:
+    enabled: true
+
+  # OTel-native dashboards shipped with the chart, provisioned via the
+  # dashboards sidecar.
+  dashboards:
+    enabled: true
+    # Grafana folder the dashboards land in (grafana_folder annotation).
+    folder: Platform
+    # Dashboards to skip, by file basename (e.g. [otel-karpenter-nap]).
+    exclude: []

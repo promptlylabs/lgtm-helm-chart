@@ -1,0 +1,41 @@
+# Reference ArgoCD Application for the lgtm umbrella chart.
+#
+# Two settings are load-bearing:
+#   - ServerSideApply: kube-prometheus-stack CRDs are 600-830KB — far over the
+#     client-side-apply annotation limit. Required, not optional.
+#   - retry: the first sync creates the OTel operator and the collector CRs in
+#     one pass; the CRs fail until the operator webhook is ready, and the
+#     retries converge. The CR manifests already carry
+#     SkipDryRunOnMissingResource annotations.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lgtm
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://promptlylabs.github.io/lgtm-helm-chart
+    chart: lgtm
+    targetRevision: 0.1.0
+    helm:
+      releaseName: lgtm
+      # valuesObject:
+      #   lgtm:
+      #     clusterName: my-cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

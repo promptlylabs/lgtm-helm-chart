@@ -1,0 +1,71 @@
+{
+  // Automated dependency updates — policy recorded in docs/adrs/0008.
+  // Runs via the hosted Mend Renovate GitHub App, scoped to this repo.
+  //
+  // Version mapping: dep patch → chart patch, dep minor → chart minor,
+  // dep major → chart minor + manual review. Chart MAJORS are reserved for
+  // breaking changes to this chart's own values contract, decided by the
+  // human reviewing the dep-major PR.
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended"],
+  timezone: "Europe/Lisbon",
+  // One batch per week; majors arrive as their own PRs (separateMajorMinor).
+  schedule: ["before 6am on monday"],
+  // Supply-chain guard: never pick up a release younger than a week —
+  // compromised or broken releases are usually yanked within days.
+  minimumReleaseAge: "7 days",
+  separateMajorMinor: true,
+  dependencyDashboard: true,
+  // Regenerate Chart.lock when Chart.yaml dependencies change
+  // (charts/*.tgz stay gitignored).
+  postUpdateOptions: ["helmUpdateSubChartArchives"],
+  packageRules: [
+    {
+      // Non-major chart dependencies: one grouped weekly PR, automerged when
+      // the required checks (lint + smoke) are green.
+      matchManagers: ["helmv3"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "chart dependencies (non-major)",
+      labels: ["dependencies"],
+      automerge: true,
+      platformAutomerge: true,
+      bumpVersions: [
+        {
+          name: "Bump chart version (non-major)",
+          filePatterns: ["/(^|/)charts/lgtm/Chart\\.yaml$/"],
+          matchStrings: ["(?:^|\\n)version:\\s\"?(?<version>\\d+\\.\\d+\\.\\d+)\"?(?:$|\\n)"],
+          bumpType: "{{#if isPatch}}patch{{else}}minor{{/if}}",
+        },
+      ],
+    },
+    {
+      // Major chart dependencies: separate PR, never automerged — the
+      // reviewer adapts values.d/ + collector configs if needed and decides
+      // whether OUR values contract broke (→ manual chart major).
+      matchManagers: ["helmv3"],
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "major-upstream"],
+      bumpVersions: [
+        {
+          name: "Bump chart version (upstream major)",
+          filePatterns: ["/(^|/)charts/lgtm/Chart\\.yaml$/"],
+          matchStrings: ["(?:^|\\n)version:\\s\"?(?<version>\\d+\\.\\d+\\.\\d+)\"?(?:$|\\n)"],
+          bumpType: "minor",
+        },
+      ],
+    },
+    {
+      // Keep GitHub Actions current too. Major action updates intentionally
+      // fall through to config:recommended defaults (separate PR, no
+      // automerge). Note: the docs-check action pin points at a private repo
+      // Renovate cannot see — that one stays manual.
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "github actions (non-major)",
+      labels: ["dependencies"],
+      automerge: true,
+      platformAutomerge: true,
+    },
+  ],
+}

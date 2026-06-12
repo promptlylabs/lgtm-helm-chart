@@ -1,0 +1,111 @@
+# ── Tempo (single-binary chart, ADR-0004) ────────────────────────────────────
+# One StatefulSet, local trace blocks + WAL on a PVC. The metrics generator
+# pushes RED metrics (span-metrics, service-graphs) to Prometheus remote-write
+# and keeps local-blocks for TraceQL metrics queries (Traces Drilldown).
+# Upstream values: https://github.com/grafana-community/helm-charts/tree/main/charts/tempo
+
+tempo:
+  enabled: true
+
+  # The endpoint helpers in this chart derive the Tempo service name from this
+  # override.
+  fullnameOverride: tempo
+
+  tempo:
+    # Memory ballast is a legacy Go GC technique replaced by GOMEMLIMIT; the
+    # chart default (1024MB) just wastes memory and contributes to OOMKills.
+    memBallastSizeMbs: 0
+
+    # 2Gi limit learned from production OOMKills — the metrics generator,
+    # compactor and ingester together need the headroom.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 1Gi
+      limits:
+        memory: 2Gi
+
+    multitenancyEnabled: false
+
+    retention: 48h
+
+    metricsGenerator:
+      enabled: true
+      # Same-namespace short name (Helm cannot template sub-chart values).
+      # Must be updated if kube-prometheus-stack.fullnameOverride changes or
+      # Prometheus lives outside this release.
+      remoteWriteUrl: "http://prom-stack-prometheus:9090/api/v1/write"
+      processor:
+        # TraceQL metrics queries (rate/count/histogram) used by Traces Drilldown.
+        local_blocks:
+          flush_to_storage: true
+        service_graphs:
+          wait: 10s
+          max_items: 10000
+          enable_virtual_node_label: true
+          enable_client_server_prefix: true
+          dimensions:
+            - http.method
+            - db.system
+          peer_attributes:
+            - db.name
+            - db.system
+            - messaging.destination.name
+            - server.address
+        span_metrics:
+          enable_target_info: true
+          dimensions:
+            - http.method
+            - http.route
+            - http.status_code
+            - db.system
+            - db.operation.name
+            - rpc.method
+            - rpc.service
+          filter_policies:
+            - exclude:
+                match_type: regex
+                attributes:
+                  - key: name
+                    value: "health|readiness|liveness|HEAD /"
+            - exclude:
+                match_type: strict
+                attributes:
+                  - key: kind
+                    value: SPAN_KIND_INTERNAL
+      storage:
+        path: /var/tempo/metrics
+        remote_write:
+          - url: "http://prom-stack-prometheus:9090/api/v1/write"
+            send_exemplars: true
+
+    # Metrics-generator processors are disabled by default and must be
+    # activated per tenant via overrides.
+    # https://grafana.com/docs/tempo/latest/configuration/#standard-overrides
+    overrides:
+      defaults:
+        metrics_generator:
+          processors:
+            - service-graphs
+            - span-metrics
+            - local-blocks
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+
+  # Trace blocks + WAL + metrics-generator local-blocks.
+  persistence:
+    enabled: true
+    size: 15Gi
+
+  # Scraped by the node collector (no opentelemetry.io/scope label needed).
+  serviceMonitor:
+    enabled: true
+
+  service:
+    type: ClusterIP

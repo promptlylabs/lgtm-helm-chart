@@ -1,0 +1,271 @@
+name: Smoke Test
+
+# Installs the full stack on a throwaway kind cluster and asserts telemetry
+# actually flows. This is the gate that makes Renovate automerge safe: a
+# dependency update that renders fine but breaks at runtime (collector config
+# renames, operator webhook changes, storage schema issues) fails here.
+
+on:
+  pull_request:
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIND_NETWORK: kind
+      REGISTRY_CACHE_ROOT: /tmp/registry-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Cache Helm repository cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/helm
+          key: helm-${{ runner.os }}-${{ hashFiles('charts/lgtm/Chart.lock') }}
+          restore-keys: |
+            helm-${{ runner.os }}-
+
+      - name: Build chart dependencies
+        run: make deps
+
+      # ── Pull-through registry mirrors ────────────────────────────────────
+      # One CNCF distribution registry per upstream, on the kind docker
+      # network; containerd inside the node routes pulls through them (see
+      # .github/kind/smoke-config.yaml). Each mirror's storage is
+      # content-addressed and append-only, so caches are safe to share
+      # across runs; keyed on Chart.lock since image versions follow chart
+      # versions, with a prefix fallback so version bumps start warm.
+      - name: Restore docker.io mirror cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/registry-cache/docker-io
+          key: registry-cache-docker-io-${{ hashFiles('charts/lgtm/Chart.lock') }}
+          restore-keys: |
+            registry-cache-docker-io-
+
+      - name: Restore quay.io mirror cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/registry-cache/quay-io
+          key: registry-cache-quay-io-${{ hashFiles('charts/lgtm/Chart.lock') }}
+          restore-keys: |
+            registry-cache-quay-io-
+
+      - name: Restore ghcr.io mirror cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/registry-cache/ghcr-io
+          key: registry-cache-ghcr-io-${{ hashFiles('charts/lgtm/Chart.lock') }}
+          restore-keys: |
+            registry-cache-ghcr-io-
+
+      - name: Start registry mirrors
+        run: |
+          docker network create "${KIND_NETWORK}" 2>/dev/null || true
+          mkdir -p \
+            "${REGISTRY_CACHE_ROOT}/docker-io" \
+            "${REGISTRY_CACHE_ROOT}/quay-io" \
+            "${REGISTRY_CACHE_ROOT}/ghcr-io"
+          start_mirror() {
+            local name="$1" upstream="$2" volume="$3"
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            docker run -d --restart=always --net="${KIND_NETWORK}" \
+              --name "$name" \
+              -e REGISTRY_PROXY_REMOTEURL="$upstream" \
+              -v "$volume":/var/lib/registry \
+              registry:3 >/dev/null
+          }
+          start_mirror mirror-docker-io https://registry-1.docker.io "${REGISTRY_CACHE_ROOT}/docker-io"
+          start_mirror mirror-quay-io   https://quay.io              "${REGISTRY_CACHE_ROOT}/quay-io"
+          start_mirror mirror-ghcr-io   https://ghcr.io              "${REGISTRY_CACHE_ROOT}/ghcr-io"
+          # Fail loudly if a mirror never serves /v2/ — containerd would
+          # silently fall back to direct pulls, defeating the cache.
+          for name in mirror-docker-io mirror-quay-io mirror-ghcr-io; do
+            ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$name")
+            ready=0
+            for _ in $(seq 1 30); do
+              if curl -fsS "http://${ip}:5000/v2/" >/dev/null 2>&1; then
+                echo "$name ready (ip=${ip})"; ready=1; break
+              fi
+              sleep 1
+            done
+            if [ "$ready" -ne 1 ]; then
+              echo "::error::$name failed to serve /v2/ within 30s"
+              docker logs "$name" || true
+              exit 1
+            fi
+          done
+
+      - name: Generate hosts.toml files for each upstream
+        run: |
+          mkdir -p /tmp/containerd-certs.d/docker.io \
+                   /tmp/containerd-certs.d/quay.io \
+                   /tmp/containerd-certs.d/ghcr.io
+          cat > /tmp/containerd-certs.d/docker.io/hosts.toml <<'EOF'
+          [host."http://mirror-docker-io:5000"]
+            capabilities = ["pull", "resolve"]
+          EOF
+          cat > /tmp/containerd-certs.d/quay.io/hosts.toml <<'EOF'
+          [host."http://mirror-quay-io:5000"]
+            capabilities = ["pull", "resolve"]
+          EOF
+          cat > /tmp/containerd-certs.d/ghcr.io/hosts.toml <<'EOF'
+          [host."http://mirror-ghcr-io:5000"]
+            capabilities = ["pull", "resolve"]
+          EOF
+
+      # ── Cached kind node image ───────────────────────────────────────────
+      # The node image is pulled by the host docker daemon (the mirrors only
+      # help inside the cluster), so cache its tarball directly.
+      - name: Resolve kind node image
+        id: kind-node
+        run: |
+          image=$(awk '/^[[:space:]]*image:[[:space:]]*kindest\/node:/ {sub(/^[[:space:]]*image:[[:space:]]*/,""); print; exit}' .github/kind/smoke-config.yaml)
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache kind node image tarball
+        id: kind-node-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/kind-node-image.tar
+          key: kind-node-${{ steps.kind-node.outputs.image }}
+
+      - name: Pull kind node image (cache miss)
+        if: steps.kind-node-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull "${{ steps.kind-node.outputs.image }}"
+          docker save "${{ steps.kind-node.outputs.image }}" -o /tmp/kind-node-image.tar
+
+      - name: Load cached kind node image
+        run: docker load -i /tmp/kind-node-image.tar
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: smoke
+          config: .github/kind/smoke-config.yaml
+
+      - name: "Phase 1: install with collectors disabled"
+        run: |
+          helm install lgtm charts/lgtm -n observability --create-namespace \
+            --set collectors.enabled=false --timeout 10m
+          kubectl -n observability wait deploy --all --for=condition=Available --timeout=480s
+          for sts in loki tempo pyroscope prometheus-prom-stack-prometheus; do
+            for i in $(seq 1 60); do
+              kubectl -n observability get statefulset/$sts >/dev/null 2>&1 && break
+              sleep 5
+            done
+            kubectl -n observability rollout status statefulset/$sts --timeout=300s
+          done
+
+      - name: "Phase 2: enable collectors"
+        run: |
+          helm upgrade lgtm charts/lgtm -n observability \
+            --reuse-values --set collectors.enabled=true
+          # The operator creates the workloads asynchronously — wait for them
+          # to exist, then for their rollouts.
+          for w in daemonset/otel-node-collector-collector statefulset/otel-cluster-collector-collector; do
+            for i in $(seq 1 60); do
+              kubectl -n observability get $w >/dev/null 2>&1 && break
+              sleep 5
+            done
+            kubectl -n observability rollout status $w --timeout=300s
+          done
+          kubectl -n observability get opentelemetrycollectors
+
+      - name: Assert telemetry flows end to end
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          # Give the collectors one scrape/batch cycle before asserting.
+          sleep 45
+
+          # ── traces: test span → node collector OTLP → Tempo ──────────────
+          kubectl -n observability port-forward svc/otel-node-collector-collector 14318:4318 >/dev/null 2>&1 &
+          sleep 3
+          NOW=$(date +%s)000000000
+          curl -fsS -X POST localhost:14318/v1/traces -H 'Content-Type: application/json' -d "{
+            \"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"smoke-test\"}}]},
+            \"scopeSpans\":[{\"spans\":[{\"traceId\":\"5b8efff798038103d269b633813fc60c\",\"spanId\":\"eee19b7ec3c1b174\",
+            \"name\":\"smoke-span\",\"kind\":1,\"startTimeUnixNano\":\"$NOW\",\"endTimeUnixNano\":\"$NOW\"}]}]}]}" \
+            || fail "node collector rejected the OTLP test span"
+
+          kubectl -n observability port-forward svc/tempo 13200:3200 >/dev/null 2>&1 &
+          sleep 3
+          found=0
+          for i in $(seq 1 24); do
+            n=$(curl -fsS 'localhost:13200/api/search?limit=5' | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("traces",[])))' || echo 0)
+            if [ "$n" -gt 0 ]; then found=1; break; fi
+            sleep 5
+          done
+          [ "$found" -eq 1 ] || fail "test span never showed up in Tempo search"
+          echo "traces OK"
+
+          # ── metrics: hostmetrics → Prometheus OTLP (dotted OTel names) ────
+          kubectl -n observability port-forward svc/prom-stack-prometheus 19090:9090 >/dev/null 2>&1 &
+          sleep 3
+          found=0
+          for i in $(seq 1 36); do
+            n=$(curl -fsS 'localhost:19090/api/v1/query' --data-urlencode 'query=count({"system.cpu.utilization"})' \
+              | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else 0)' || echo 0)
+            if [ "$n" -gt 0 ]; then found=1; break; fi
+            sleep 5
+          done
+          [ "$found" -eq 1 ] || fail "no OTel host metrics arrived in Prometheus"
+          echo "metrics OK ($n series)"
+
+          # ── logs: filelog → Loki OTLP at :3100 (no gateway) ───────────────
+          kubectl -n observability port-forward svc/loki 13100:3100 >/dev/null 2>&1 &
+          sleep 3
+          found=0
+          for i in $(seq 1 24); do
+            n=$(curl -fsS -G 'localhost:13100/loki/api/v1/query_range' \
+              --data-urlencode 'query={k8s_namespace_name="observability"}' --data-urlencode 'limit=1' \
+              | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["result"]))' || echo 0)
+            if [ "$n" -gt 0 ]; then found=1; break; fi
+            sleep 5
+          done
+          [ "$found" -eq 1 ] || fail "no container logs arrived in Loki"
+          echo "logs OK"
+
+          # ── grafana: sidecars provisioned the datasources + dashboards ───
+          GP=$(kubectl -n observability get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d)
+          kubectl -n observability port-forward svc/grafana 13000:80 >/dev/null 2>&1 &
+          sleep 3
+          ds=$(curl -fsS -u "admin:$GP" localhost:13000/api/datasources | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          [ "$ds" -ge 4 ] || fail "expected >=4 Grafana datasources, got $ds"
+          db=$(curl -fsS -u "admin:$GP" 'localhost:13000/api/search?type=dash-db' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          [ "$db" -ge 9 ] || fail "expected >=9 Grafana dashboards, got $db"
+          echo "grafana OK ($ds datasources, $db dashboards)"
+
+      - name: Check collectors for steady-state errors
+        run: |
+          # Startup races (target allocator not up yet) log errors in the
+          # first seconds — only steady-state errors fail the build.
+          sleep 60
+          errs=$(kubectl -n observability logs ds/otel-node-collector-collector --since=60s 2>/dev/null | grep -ciE '\berror\b' || true)
+          errs_cluster=$(kubectl -n observability logs statefulset/otel-cluster-collector-collector --since=60s 2>/dev/null | grep -ciE '\berror\b' || true)
+          if [ "$errs" -gt 0 ] || [ "$errs_cluster" -gt 0 ]; then
+            echo "::error::collectors still logging errors at steady state"
+            kubectl -n observability logs ds/otel-node-collector-collector --since=60s | grep -iE '\berror\b' | head -10
+            kubectl -n observability logs statefulset/otel-cluster-collector-collector --since=60s | grep -iE '\berror\b' | head -10
+            exit 1
+          fi
+          echo "collector logs clean"
+
+      - name: Show cluster state on failure
+        if: failure()
+        run: |
+          kubectl -n observability get pods -o wide || true
+          kubectl -n observability get opentelemetrycollectors || true
+          kubectl -n observability describe pods | grep -A5 'Events:' | head -80 || true

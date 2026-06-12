@@ -1,0 +1,14 @@
+# Minimal / first-phase install.
+#
+# With plain Helm, the OpenTelemetryCollector CRs cannot be admitted until the
+# operator webhook is running, so a first install goes in two phases:
+#
+#   helm install lgtm promptlylabs/lgtm -n observability --create-namespace \
+#     -f values-minimal.yaml
+#   helm upgrade lgtm promptlylabs/lgtm -n observability \
+#     --reuse-values --set collectors.enabled=true
+#
+# (ArgoCD users don't need this — see argocd-application.yaml.)
+
+collectors:
+  enabled: false

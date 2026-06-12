@@ -1,0 +1,42 @@
+lgtm {{ .Chart.Version }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+{{- if (index .Values "kube-prometheus-stack" "enabled") }}
+  - Prometheus (OTLP-native, storage-only): {{ include "lgtm.prometheus.endpoint" . }}
+{{- end }}
+{{- if .Values.grafana.enabled }}
+  - Grafana:    kubectl -n {{ .Release.Namespace }} port-forward svc/grafana 3000:80
+                admin password: kubectl -n {{ .Release.Namespace }} get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+{{- end }}
+{{- if .Values.loki.enabled }}
+  - Loki:       {{ include "lgtm.loki.endpoint" . }} (OTLP ingest at /otlp)
+{{- end }}
+{{- if .Values.tempo.enabled }}
+  - Tempo:      {{ include "lgtm.tempo.queryEndpoint" . }} (OTLP gRPC at {{ include "lgtm.tempo.otlpGrpcEndpoint" . }})
+{{- end }}
+{{- if .Values.pyroscope.enabled }}
+  - Pyroscope:  {{ include "lgtm.pyroscope.endpoint" . }}
+{{- end }}
+
+{{- if .Values.collectors.enabled }}
+
+Applications send OTLP to the node collector:
+  grpc: otel-node-collector-collector.{{ .Release.Namespace }}.svc:4317
+  http: otel-node-collector-collector.{{ .Release.Namespace }}.svc:4318
+ServiceMonitors/PodMonitors are scraped automatically — no labels needed.
+
+NOTE: on a FIRST install with plain Helm, the OpenTelemetryCollector resources
+race the operator webhook and the install can fail. Either install once with
+--set collectors.enabled=false and upgrade with it enabled, or simply re-run
+`helm upgrade --install`. ArgoCD with retries converges on its own (the chart
+README has the required Application settings: ServerSideApply=true + retry).
+{{- else }}
+
+Collectors are DISABLED (collectors.enabled=false) — no telemetry is being
+collected. Once the OTel operator is running, enable them:
+  helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set collectors.enabled=true
+{{- end }}
+
+Ship your own dashboards from any namespace: ConfigMap with label
+grafana_dashboard: "1" (folder via annotation grafana_folder). Same for
+datasources (grafana_datasource) and alert rules (grafana_alert).

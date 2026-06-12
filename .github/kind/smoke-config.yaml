@@ -1,0 +1,21 @@
+# kind cluster config for the smoke test.
+#
+# The node image is pinned so CI can cache its tarball (the workflow resolves
+# it from this file). containerd inside the node routes docker.io/quay.io/
+# ghcr.io pulls through pull-through registry mirrors running on the kind
+# docker network — the workflow writes per-host hosts.toml files into
+# /tmp/containerd-certs.d and bind-mounts them here. containerd 2.x (node
+# v1.35+) dropped the legacy registry.mirrors config block; config_path +
+# hosts.toml is the supported mechanism.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.35.0
+    extraMounts:
+      - hostPath: /tmp/containerd-certs.d
+        containerPath: /etc/containerd/certs.d
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"

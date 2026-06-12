@@ -1,0 +1,27 @@
+{{- /*
+One ConfigMap per dashboard JSON in dashboards/, discovered by the Grafana
+dashboards sidecar (label grafana_dashboard: "1"). The grafana_folder
+annotation places them in a Grafana folder; individual dashboards can be
+dropped via lgtm.dashboards.exclude.
+*/ -}}
+{{- if .Values.lgtm.dashboards.enabled }}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+{{- $name := base $path | trimSuffix ".json" }}
+{{- if not (has $name $.Values.lgtm.dashboards.exclude) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-dashboard-{{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+    {{- include "lgtm.labels" $ | nindent 4 }}
+  annotations:
+    grafana_folder: {{ $.Values.lgtm.dashboards.folder | quote }}
+data:
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

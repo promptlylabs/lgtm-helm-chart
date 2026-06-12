@@ -1,0 +1,12 @@
+# Implementation details: https://github.com/promptlylabs/shared-workflows/blob/main/.github/workflows/gitleaks.yml
+name: Gitleaks Secret Detection
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+
+jobs:
+  gitleaks:
+    uses: promptlylabs/shared-workflows/.github/workflows/gitleaks.yml@main
+    secrets:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

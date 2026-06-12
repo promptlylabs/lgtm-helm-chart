@@ -1,0 +1,13 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+  - repo: local
+    hooks:
+      - id: assemble-values
+        name: Assemble charts/lgtm/values.yaml from values.d/
+        entry: python3 scripts/assemble_values.py
+        language: system
+        files: ^charts/lgtm/values\.d/
+        pass_filenames: false

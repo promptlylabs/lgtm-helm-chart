@@ -1,0 +1,1879 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "enable": true,
+        "expr": "increase(argocd_app_sync_total{namespace=\"argocd\", phase=\"Succeeded\"}[$__rate_interval]) > 0",
+        "hide": false,
+        "iconColor": "green",
+        "name": "ArgoCD Sync",
+        "step": "60s",
+        "tagKeys": "name",
+        "textFormat": "",
+        "titleFormat": "Sync: {{name}}",
+        "type": "dashboard",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "description": "Karpenter / NAP node pool observability — built from OTel metrics with node name regex inference (no native Karpenter metrics available)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false,
+      "title": "← Back to Cluster",
+      "tooltip": "Return to cluster-wide overview",
+      "type": "link",
+      "url": "/d/otel-kubernetes-cluster"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Host Metrics →",
+      "tooltip": "Drill down to per-node host metrics",
+      "type": "link",
+      "url": "/d/otel-host-metrics"
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "NAP Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "## Karpenter Metrics Unavailable\n\nAKS Node Auto-Provisioning (NAP) runs Karpenter as a **managed, hidden service**. No `karpenter_*` metrics are exposed and `kube-state-metrics` is not deployed.\n\nThis dashboard infers pool membership from **node name patterns** (e.g., `aks-spot-amd64-ephemeral-*`) and uses OTel metrics as a proxy for scaling behavior.\n\n**Tracking issues:**\n- [Azure/karpenter-provider-azure#612](https://github.com/Azure/karpenter-provider-azure/issues/612) — Karpenter metrics in NAP (closed)\n- [Azure/AKS#5629](https://github.com/Azure/AKS/issues/5629) — NAP node observability (open, ETA May 2026)\n\n**When native metrics become available**, this dashboard will be updated to use `karpenter_*` metrics directly.",
+        "mode": "markdown"
+      },
+      "title": "Karpenter Metrics Info",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 6 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "NAP Nodes (Spot)",
+      "description": "Total number of spot nodes (AMD64 + ARM64) with condition_ready metric",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-spot.*\"}) or vector(0)",
+          "legendFormat": "spot",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 6 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "Spot AMD64 Nodes",
+      "description": "Number of spot AMD64 nodes (aks-spot-amd64-ephemeral-*)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "amd64",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 6 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "Spot ARM64 Nodes",
+      "description": "Number of spot ARM64 nodes (aks-spot-arm64-ephemeral-*)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "arm64",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 6 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "System Nodes",
+      "description": "Number of system pool nodes (aks-system-*)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-system-.*\"}) or vector(0)",
+          "legendFormat": "system",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 6 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "NAP Not Ready",
+      "description": "Number of NAP nodes with condition_ready == 0 (not ready)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-spot.*|aks-system-.*\"} == 0) or vector(0)",
+          "legendFormat": "not ready",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 6 },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "Total Pods on NAP",
+      "description": "Running pods (phase==2) on spot nodes",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.pod.phase\", \"k8s.node.name\"=~\"aks-spot.*\"} == 2) or vector(0)",
+          "legendFormat": "pods",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+      "id": 150,
+      "title": "Kubernetes Events",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 11 },
+      "id": 31,
+      "links": [
+        {
+          "title": "Explore all NAP events",
+          "url": "/explore?orgId=1&left={\"queries\":[{\"refId\":\"A\",\"expr\":\"{service_name=\\\"k8s-events\\\"} | k8s_object_kind=~\\\"Node|NodeClaim|NodePool|AKSNodeClass\\\"\",\"datasource\":{\"type\":\"loki\",\"uid\":\"loki\"}}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"}}",
+          "targetBlank": true
+        }
+      ],
+      "options": {
+        "dedupStrategy": "exact",
+        "enableLogDetails": true,
+        "logDetailPanelMode": "sidebar",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service_name=\"k8s-events\"} !~ \"IMDS query failed\" !~ \"Timeout when running plugin\" | k8s_object_kind=~\"Node|NodeClaim|NodePool|AKSNodeClass\" | detected_level=\"Warning\"",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service_name=\"k8s-events\"} | k8s_object_kind=\"Pod\" | k8s_event_reason=\"FailedScheduling\"",
+          "refId": "B"
+        }
+      ],
+      "title": "Kubernetes Events (Warnings)",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "id": 200,
+      "title": "Node Count Over Time",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "id": 8,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max", "min"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "NAP Node Count by Pool",
+      "description": "Number of nodes per pool over time — proxy for NAP scaling events",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"aks-system-.*\"}) or vector(0)",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "id": 9,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max", "min"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "NAP Node Count by Zone",
+      "description": "Node count per availability zone filtered by pool — uses k8s.node.cpu.usage (has AZ label)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count by (\"cloud.availability_zone\") ({__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"$pool\", \"cloud.availability_zone\"=~\"$zone\"})",
+          "legendFormat": "zone-{{cloud.availability_zone}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
+      "id": 300,
+      "title": "Allocatable Capacity",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 30 },
+      "id": 10,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Allocatable CPU by Pool",
+      "description": "Total allocatable CPU cores per node pool (stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"aks-system-.*\"}) or vector(0)",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 30 },
+      "id": 11,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Allocatable Memory by Pool",
+      "description": "Total allocatable memory per node pool (stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"aks-system-.*\"}) or vector(0)",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 30 },
+      "id": 12,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Allocatable Pods by Pool",
+      "description": "Total allocatable pod capacity per node pool (stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) or vector(0)",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"aks-system-.*\"}) or vector(0)",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "id": 400,
+      "title": "Resource Utilization",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null },
+              { "color": "orange", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 39 },
+      "id": 13,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "CPU Utilization % by Pool",
+      "description": "CPU usage / allocatable CPU per pool — thresholds at 70% and 90%",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) / sum({__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"})",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) / sum({__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"})",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"aks-system-.*\"}) / sum({__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"aks-system-.*\"})",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null },
+              { "color": "orange", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 39 },
+      "id": 14,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Memory Utilization % by Pool",
+      "description": "Memory working set / allocatable memory per pool",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) / sum({__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"})",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) / sum({__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"})",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum({__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"aks-system-.*\"}) / sum({__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"aks-system-.*\"})",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null },
+              { "color": "orange", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 39 },
+      "id": 15,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Pod Density by Pool",
+      "description": "Running pods / allocatable pods per pool",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "(count({__name__=\"k8s.pod.phase\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"} == 2) or vector(0)) / (sum({__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"aks-spot-amd64-ephemeral-.*\"}) > 0)",
+          "legendFormat": "spot-amd64",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "(count({__name__=\"k8s.pod.phase\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"} == 2) or vector(0)) / (sum({__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"aks-spot-arm64-ephemeral-.*\"}) > 0)",
+          "legendFormat": "spot-arm64",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "(count({__name__=\"k8s.pod.phase\", \"k8s.node.name\"=~\"aks-system-.*\"} == 2) or vector(0)) / (sum({__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"aks-system-.*\"}) > 0)",
+          "legendFormat": "system",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 },
+      "id": 500,
+      "title": "Per-Node Resource Usage",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "id": 16,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Node CPU Usage",
+      "description": "Per-node CPU usage filtered by pool and zone",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "{__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"$pool\", \"cloud.availability_zone\"=~\"$zone\"}",
+          "legendFormat": "{{k8s.node.name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "id": 17,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Node Memory Working Set",
+      "description": "Per-node memory working set filtered by pool and zone",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "{__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"$pool\", \"cloud.availability_zone\"=~\"$zone\"}",
+          "legendFormat": "{{k8s.node.name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "id": 600,
+      "title": "Node Conditions & Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 0, "y": 57 },
+      "id": 18,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "Disk Pressure",
+      "description": "Number of NAP nodes with disk_pressure condition set to true",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_disk_pressure\", \"k8s.node.name\"=~\"$pool\"} == 1) or vector(0)",
+          "legendFormat": "nodes",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 6, "y": 57 },
+      "id": 19,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "Memory Pressure",
+      "description": "Number of NAP nodes with memory_pressure condition set to true",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_memory_pressure\", \"k8s.node.name\"=~\"$pool\"} == 1) or vector(0)",
+          "legendFormat": "nodes",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 12, "y": 57 },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "PID Pressure",
+      "description": "Number of NAP nodes with pid_pressure condition set to true",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_pid_pressure\", \"k8s.node.name\"=~\"$pool\"} == 1) or vector(0)",
+          "legendFormat": "nodes",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 3, "w": 6, "x": 18, "y": 57 },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "Network Unavailable",
+      "description": "Number of NAP nodes with network_unavailable condition set to true",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count({__name__=\"k8s.node.condition_network_unavailable\", \"k8s.node.name\"=~\"$pool\"} == 1) or vector(0)",
+          "legendFormat": "nodes",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "noValue": "All nodes ready"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Node" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [{ "title": "View node detail", "url": "/d/otel-host-metrics?var-node=${__value.text}", "targetBlank": false }]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 60 },
+      "id": 22,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": false, "displayName": "Node" }]
+      },
+      "title": "Non-Ready Nodes",
+      "description": "NAP nodes with condition_ready == 0 — empty table means all nodes are ready",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "{__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"$pool\"} == 0",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "__name__": true,
+              "__type__": true,
+              "__unit__": true,
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "k8s.node.uid": true,
+              "Value": true
+            },
+            "indexByName": {
+              "k8s.node.name": 0
+            },
+            "renameByName": {
+              "k8s.node.name": "Node"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 },
+      "id": 700,
+      "title": "Node Detail Table",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": { "type": "auto" },
+                "inspect": false,
+                "width": 110
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Node" },
+                "properties": [
+                  { "id": "custom.width", "value": 280 },
+                  {
+                    "id": "links",
+                    "value": [{ "title": "View node detail", "url": "/d/otel-host-metrics?var-node=${__value.text}", "targetBlank": false }]
+                  }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Status" },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      { "options": { "1": { "text": "Ready", "color": "green" } }, "type": "value" },
+                      { "options": { "0": { "text": "Not Ready", "color": "red" } }, "type": "value" }
+                    ]
+                  },
+                  { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "CPU %" },
+                "properties": [
+                  { "id": "unit", "value": "percentunit" },
+                  { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "continuous-GrYlRd" } },
+                  { "id": "max", "value": 1 },
+                  { "id": "min", "value": 0 }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Mem %" },
+                "properties": [
+                  { "id": "unit", "value": "percentunit" },
+                  { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "continuous-GrYlRd" } },
+                  { "id": "max", "value": 1 },
+                  { "id": "min", "value": 0 }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Disk %" },
+                "properties": [
+                  { "id": "unit", "value": "percentunit" },
+                  { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "continuous-GrYlRd" } },
+                  { "id": "max", "value": 1 },
+                  { "id": "min", "value": 0 }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Memory" },
+                "properties": [
+                  { "id": "unit", "value": "bytes" }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Mem Usage" },
+                "properties": [
+                  { "id": "unit", "value": "bytes" }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "CPU Cores" },
+                "properties": [
+                  { "id": "unit", "value": "short" },
+                  { "id": "decimals", "value": 2 }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "CPU Usage" },
+                "properties": [
+                  { "id": "unit", "value": "short" },
+                  { "id": "decimals", "value": 2 }
+                ]
+              }
+            ]
+          },
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 66 },
+          "id": 23,
+          "options": {
+            "cellHeight": "sm",
+            "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+            "showHeader": true,
+            "sortBy": [{ "desc": true, "displayName": "Status" }]
+          },
+          "title": "NAP Node Inventory",
+          "description": "Per-node resource utilization summary for NAP nodes including CPU, memory, disk percentages, and allocatable capacity",
+          "type": "table",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.condition_ready\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "B"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "C"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.allocatable_pods\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "D"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "E"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "F"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"$pool\"} / on(\"k8s.node.name\") {__name__=\"k8s.node.allocatable_cpu\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "G"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"$pool\"} / on(\"k8s.node.name\") {__name__=\"k8s.node.allocatable_memory\", \"k8s.node.name\"=~\"$pool\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "H"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "sum by (\"k8s.node.name\")({__name__=\"k8s.node.filesystem.usage\", \"k8s.node.name\"=~\"$pool\"}) / sum by (\"k8s.node.name\")({__name__=\"k8s.node.filesystem.capacity\", \"k8s.node.name\"=~\"$pool\"})",
+              "format": "table",
+              "instant": true,
+              "refId": "I"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "byField": "k8s.node.name",
+                "mode": "outer"
+              }
+            },
+            {
+              "id": "filterByValue",
+              "options": {
+                "type": "include",
+                "filters": [
+                  {
+                    "fieldName": "Value #A",
+                    "config": {
+                      "id": "isNotNull"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "__name__ 1": true,
+                  "__name__ 2": true,
+                  "__name__ 3": true,
+                  "__name__ 4": true,
+                  "__name__ 5": true,
+                  "__name__ 6": true,
+                  "__name__ 7": true,
+                  "__name__ 8": true,
+                  "__name__ 9": true,
+                  "__type__ 1": true,
+                  "__type__ 2": true,
+                  "__type__ 3": true,
+                  "__type__ 4": true,
+                  "__type__ 5": true,
+                  "__type__ 6": true,
+                  "__type__ 7": true,
+                  "__type__ 8": true,
+                  "__type__ 9": true,
+                  "Time 1": true,
+                  "Time 2": true,
+                  "Time 3": true,
+                  "Time 4": true,
+                  "Time 5": true,
+                  "Time 6": true,
+                  "Time 7": true,
+                  "Time 8": true,
+                  "Time 9": true,
+                  "job 1": true,
+                  "job 2": true,
+                  "job 3": true,
+                  "job 4": true,
+                  "job 5": true,
+                  "job 6": true,
+                  "job 7": true,
+                  "job 8": true,
+                  "job 9": true,
+                  "instance 1": true,
+                  "instance 2": true,
+                  "instance 3": true,
+                  "instance 4": true,
+                  "instance 5": true,
+                  "instance 6": true,
+                  "instance 7": true,
+                  "instance 8": true,
+                  "instance 9": true,
+                  "k8s.node.uid 1": true,
+                  "k8s.node.uid 2": true,
+                  "k8s.node.uid 3": true,
+                  "k8s.node.uid 4": true,
+                  "k8s.node.uid 5": true,
+                  "k8s.node.uid 6": true,
+                  "k8s.node.uid 7": true,
+                  "k8s.node.uid 8": true,
+                  "k8s.node.uid 9": true,
+                  "__unit__ 1": true,
+                  "__unit__ 2": true,
+                  "__unit__ 3": true,
+                  "__unit__ 4": true,
+                  "__unit__ 5": true,
+                  "__unit__ 6": true,
+                  "__unit__ 7": true,
+                  "__unit__ 8": true,
+                  "__unit__ 9": true,
+                  "cloud.availability_zone 1": true,
+                  "cloud.availability_zone 2": true,
+                  "cloud.availability_zone 3": true,
+                  "cloud.availability_zone 4": true,
+                  "cloud.availability_zone 5": true,
+                  "cloud.availability_zone 6": true
+                },
+                "indexByName": {
+                  "k8s.node.name": 0,
+                  "Value #A": 1,
+                  "Value #G": 2,
+                  "Value #H": 3,
+                  "Value #I": 4,
+                  "Value #B": 5,
+                  "Value #E": 6,
+                  "Value #C": 7,
+                  "Value #F": 8,
+                  "Value #D": 9
+                },
+                "renameByName": {
+                  "k8s.node.name": "Node",
+                  "Value #A": "Status",
+                  "Value #B": "CPU Cores",
+                  "Value #C": "Memory",
+                  "Value #D": "Pod Capacity",
+                  "Value #E": "CPU Usage",
+                  "Value #F": "Mem Usage",
+                  "Value #G": "CPU %",
+                  "Value #H": "Mem %",
+                  "Value #I": "Disk %"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "id": 800,
+      "title": "Availability Zone Distribution",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 67 },
+      "id": 24,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "title": "Nodes per Zone",
+      "description": "Number of NAP nodes per availability zone",
+      "type": "bargauge",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "count by (\"cloud.availability_zone\") (group by (\"cloud.availability_zone\", \"k8s.node.name\") ({__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"$pool\", \"cloud.availability_zone\"=~\"$zone\"}))",
+          "legendFormat": "zone-{{cloud.availability_zone}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 67 },
+      "id": 25,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "CPU by Zone",
+      "description": "CPU usage per availability zone (stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (\"cloud.availability_zone\") ({__name__=\"k8s.node.cpu.usage\", \"k8s.node.name\"=~\"$pool\", \"cloud.availability_zone\"=~\"$zone\"})",
+          "legendFormat": "zone-{{cloud.availability_zone}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 67 },
+      "id": 26,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Memory by Zone",
+      "description": "Memory working set per availability zone (stacked)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum by (\"cloud.availability_zone\") ({__name__=\"k8s.node.memory.working_set\", \"k8s.node.name\"=~\"$pool\", \"cloud.availability_zone\"=~\"$zone\"})",
+          "legendFormat": "zone-{{cloud.availability_zone}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 73 },
+      "id": 900,
+      "title": "Workloads on NAP Nodes",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": { "group": "A", "mode": "normal" }
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 74 },
+          "id": 27,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Pods per Namespace on NAP",
+          "description": "Running pod count by namespace on NAP spot nodes (stacked)",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "count by (\"k8s.namespace.name\") ({__name__=\"k8s.pod.phase\", \"k8s.node.name\"=~\"$pool\"} == 2)",
+              "legendFormat": "{{k8s.namespace.name}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 74 },
+          "id": 28,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Pod CPU Usage (Top 10)",
+          "description": "Top 10 pods by CPU usage on NAP nodes",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "topk(10, {__name__=\"k8s.pod.cpu.usage\", \"k8s.node.name\"=~\"$pool\"})",
+              "legendFormat": "{{k8s.namespace.name}}/{{k8s.pod.name}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 82 },
+          "id": 29,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Pod Memory Usage (Top 10)",
+          "description": "Top 10 pods by memory working set on NAP nodes",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "topk(10, {__name__=\"k8s.pod.memory.working_set\", \"k8s.node.name\"=~\"$pool\"})",
+              "legendFormat": "{{k8s.namespace.name}}/{{k8s.pod.name}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 82 },
+          "id": 30,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Container Restarts on NAP",
+          "description": "Container restart count on NAP nodes — spikes indicate crash loops or OOM kills",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.restarts\", \"k8s.node.name\"=~\"$pool\"}",
+              "legendFormat": "{{k8s.namespace.name}}/{{k8s.pod.name}}/{{k8s.container.name}}",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "timepicker": { "refresh_intervals": ["30s", "1m", "5m", "15m"] },
+  "tags": ["platform", "karpenter", "otel"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Pool",
+        "multi": true,
+        "name": "pool",
+        "options": [
+          { "selected": false, "text": "spot-amd64", "value": "aks-spot-amd64-ephemeral-.*" },
+          { "selected": false, "text": "spot-arm64", "value": "aks-spot-arm64-ephemeral-.*" },
+          { "selected": false, "text": "system", "value": "aks-system-.*" }
+        ],
+        "query": "spot-amd64 : aks-spot-amd64-ephemeral-.*, spot-arm64 : aks-spot-arm64-ephemeral-.*, system : aks-system-.*",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom",
+        "allValue": "aks-spot.*|aks-system-.*"
+      },
+      {
+        "allValue": ".+",
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values({__name__=\"k8s.node.cpu.usage\", \"cloud.availability_zone\"=~\".+\"}, \"cloud.availability_zone\")",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Zone",
+        "multi": true,
+        "name": "zone",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({__name__=\"k8s.node.cpu.usage\", \"cloud.availability_zone\"=~\".+\"}, \"cloud.availability_zone\")",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values({__name__=\"k8s.node.condition_ready\"}, \"k8s.node.name\")",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Node",
+        "multi": true,
+        "name": "node",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({__name__=\"k8s.node.condition_ready\"}, \"k8s.node.name\")",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "utc",
+  "title": "OTel Karpenter / NAP",
+  "uid": "otel-karpenter-nap"
+}

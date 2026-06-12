@@ -1,0 +1,193 @@
+# Azure (AKS) overlay — a production setup:
+#   - Loki chunks and Tempo trace blocks in Azure Blob via Workload Identity
+#   - Grafana state in Azure Database for PostgreSQL, Entra ID SSO, SMTP via
+#     Azure Communication Services (secrets injected from an existing Secret,
+#     e.g. created by External Secrets Operator)
+#   - Azure IMDS resource detection on the node collector
+#
+# Replace every <placeholder> before use. Secrets never go in values files.
+
+lgtm:
+  clusterName: <cluster-name>            # e.g. aks-prod
+
+collectors:
+  resourceDetection:
+    detectors: [azure]
+    config:
+      azure:
+        resource_attributes:
+          # The only attribute disabled by default that the dashboards use
+          cloud.availability_zone:
+            enabled: true
+          # Constant or redundant in a single-cluster setup
+          azure.resourcegroup.name:
+            enabled: false
+          azure.vm.name:
+            enabled: false
+          azure.vm.scaleset.name:
+            enabled: false
+          azure.vm.size:
+            enabled: false
+          cloud.account.id:
+            enabled: false
+          host.id:
+            enabled: false
+          host.name:
+            enabled: false  # redundant with k8s.node.name
+          cloud.region:
+            enabled: false
+          cloud.provider:
+            enabled: false
+          cloud.platform:
+            enabled: false
+
+loki:
+  loki:
+    storage:
+      type: azure
+      bucketNames:
+        chunks: loki-chunks
+        ruler: loki-ruler
+      azure:
+        accountName: <loki-storage-account>
+        useFederatedToken: true
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: azure
+          schema: v13
+          index:
+            prefix: loki_index_
+            period: 24h
+    compactor:
+      retention_enabled: true
+      delete_request_store: azure
+    # Workload Identity webhook injection
+    podLabels:
+      azure.workload.identity/use: "true"
+  serviceAccount:
+    name: loki
+    annotations:
+      azure.workload.identity/client-id: <loki-identity-client-id>
+
+tempo:
+  tempo:
+    storage:
+      trace:
+        backend: azure
+        azure:
+          container_name: tempo-traces
+          storage_account_name: <tempo-storage-account>
+          use_federated_token: true
+        wal:
+          path: /var/tempo/wal
+  podLabels:
+    azure.workload.identity/use: "true"
+  serviceAccount:
+    name: tempo
+    annotations:
+      azure.workload.identity/client-id: <tempo-identity-client-id>
+  # WAL + metrics-generator local-blocks only — trace blocks live in Azure Blob
+  persistence:
+    enabled: true
+    size: 15Gi
+
+grafana:
+  # Entra ID via Workload Identity — Grafana authenticates with the projected
+  # SA token instead of a client secret
+  podLabels:
+    azure.workload.identity/use: "true"
+  serviceAccount:
+    annotations:
+      azure.workload.identity/client-id: <grafana-identity-client-id>
+      azure.workload.identity/tenant-id: <tenant-id>
+
+  admin:
+    existingSecret: grafana-secrets
+    userKey: admin-user
+    passwordKey: admin-password
+
+  envValueFrom:
+    GF_DATABASE_PASSWORD:
+      secretKeyRef:
+        name: grafana-secrets
+        key: db-password
+    GF_AUTH_AZUREAD_CLIENT_ID:
+      secretKeyRef:
+        name: grafana-secrets
+        key: client-id
+    GF_SMTP_USER:
+      secretKeyRef:
+        name: grafana-secrets
+        key: smtp-user
+    GF_SMTP_PASSWORD:
+      secretKeyRef:
+        name: grafana-secrets
+        key: smtp-password
+    GF_SMTP_FROM_ADDRESS:
+      secretKeyRef:
+        name: grafana-secrets
+        key: smtp-from-address
+
+  grafana.ini:
+    server:
+      root_url: https://grafana.<domain>
+    # PostgreSQL replaces SQLite (avoids ReadWriteOnce PVC constraints)
+    database:
+      type: postgres
+      host: <postgres-fqdn>:5432
+      name: grafana
+      user: grafana
+      password: $__env{GF_DATABASE_PASSWORD}
+      ssl_mode: require
+    users:
+      viewers_can_edit: true
+    auth.azuread:
+      enabled: true
+      allow_sign_up: true
+      auto_login: false
+      client_id: $__env{GF_AUTH_AZUREAD_CLIENT_ID}
+      client_authentication: workload_identity
+      federated_credential_audience: api://AzureADTokenExchange
+      scopes: openid email profile
+      auth_url: https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/authorize
+      token_url: https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token
+      allowed_organizations: <tenant-id>
+    smtp:
+      enabled: true
+      host: smtp.azurecomm.net:587
+      user: $__env{GF_SMTP_USER}
+      password: $__env{GF_SMTP_PASSWORD}
+      from_address: $__env{GF_SMTP_FROM_ADDRESS}
+      startTLS_policy: MandatoryStartTLS
+
+# ── Optional: ACR pull-through cache (uncomment and adapt) ───────────────────
+# Mappings: quay.io -> <acr>/quay, ghcr.io -> <acr>/github,
+#           docker.io -> <acr>/docker-hub, registry.k8s.io -> <acr>/k8s
+#
+# kube-prometheus-stack:
+#   prometheusOperator:
+#     image:
+#       registry: <acr>/quay
+#     prometheusConfigReloader:
+#       image:
+#         registry: <acr>/quay
+#     admissionWebhooks:
+#       patch:
+#         image:
+#           registry: <acr>/github
+#   prometheus:
+#     prometheusSpec:
+#       image:
+#         registry: <acr>/quay
+# grafana:
+#   image:
+#     registry: <acr>/docker-hub
+#   sidecar:
+#     image:
+#       registry: <acr>/docker-hub
+# opentelemetry-operator:
+#   manager:
+#     image:
+#       repository: <acr>/github/open-telemetry/opentelemetry-operator/opentelemetry-operator

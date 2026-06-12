@@ -1,0 +1,95 @@
+{{- /*
+Faro collector — Deployment, push-only (no target allocator):
+  receives  browser telemetry from the Grafana Faro SDK (console errors,
+            exceptions, web vitals, page-load/fetch traces)
+  exports   logs → Loki OTLP, traces → Tempo gRPC
+
+Off by default: it needs the contrib distribution image (faroreceiver is not
+in the k8s distribution) and a public ingest route, both client-specific.
+Routing (Ingress/HTTPRoute) to otel-faro-collector-collector:12347 is up to
+the cluster — CORS is enforced here at the receiver.
+*/ -}}
+{{- if and .Values.collectors.enabled .Values.collectors.faro.enabled }}
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-faro-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: opentelemetry-collector
+    mode: deployment
+    {{- include "lgtm.labels" . | nindent 4 }}
+  annotations:
+    # First sync races the operator webhook/CRDs — let ArgoCD retry converge.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,ServerSideApply=true
+spec:
+  mode: deployment
+  replicas: 1
+
+  image: {{ required "collectors.faro.image is required when the faro collector is enabled (faroreceiver needs the contrib distribution)" .Values.collectors.faro.image }}
+
+  {{- with .Values.collectors.priorityClassName }}
+  priorityClassName: {{ . }}
+  {{- end }}
+
+  config:
+    receivers:
+      faro:
+        endpoint: "0.0.0.0:12347"
+        cors:
+          allowed_origins:
+            {{- toYaml (required "collectors.faro.corsAllowedOrigins is required when the faro collector is enabled" .Values.collectors.faro.corsAllowedOrigins) | nindent 12 }}
+          allowed_headers:
+            - Content-Type
+            - x-faro-session-id
+
+    processors:
+      # ~80% of the 256Mi limit
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 200
+        spike_limit_mib: 64
+
+      batch:
+        send_batch_size: 1024
+        timeout: 10s
+
+      # service.name must match the backend's OTEL_SERVICE_NAME for
+      # frontend↔backend correlation in Grafana.
+      resource:
+        attributes:
+          - key: service.name
+            value: {{ .Values.collectors.faro.serviceName | quote }}
+            action: upsert
+          {{- if .Values.lgtm.clusterName }}
+          - key: cluster
+            value: {{ .Values.lgtm.clusterName | quote }}
+            action: upsert
+          {{- end }}
+          - key: collector.mode
+            value: deployment
+            action: upsert
+
+    exporters:
+      otlp_http/loki:
+        endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
+
+      otlp_grpc/tempo:
+        endpoint: {{ include "lgtm.tempo.otlpGrpcEndpoint" . }}
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        logs:
+          receivers: [faro]
+          processors: [memory_limiter, batch, resource]
+          exporters: [otlp_http/loki]
+        traces:
+          receivers: [faro]
+          processors: [memory_limiter, batch, resource]
+          exporters: [otlp_grpc/tempo]
+
+  resources:
+    {{- toYaml .Values.collectors.faro.resources | nindent 4 }}
+{{- end }}

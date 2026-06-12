@@ -1,0 +1,13 @@
+# Helm dependency archives (rebuilt from Chart.lock)
+charts/lgtm/charts/
+*.tgz
+
+# Chart-releaser working dirs
+.cr-release-packages/
+.cr-index/
+.cr-gpg/
+
+# Local scratch
+.context/
+.cache/
+__pycache__/

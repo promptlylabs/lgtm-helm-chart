@@ -1,0 +1,76 @@
+apiVersion: v2
+name: lgtm
+description: >-
+  An opinionated observability stack — Loki, Grafana, Tempo, Prometheus
+  and Pyroscope in single-binary mode, collected OpenTelemetry-natively by
+  operator-managed collectors, with correlated datasources and OTel-native
+  dashboards included. One install per cluster.
+type: application
+version: 0.1.0
+# The stack has no single app version; each component carries its own.
+appVersion: "2026.06"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/promptlylabs/lgtm-helm-chart
+sources:
+  - https://github.com/promptlylabs/lgtm-helm-chart
+keywords:
+  - observability
+  - lgtm
+  - loki
+  - grafana
+  - tempo
+  - prometheus
+  - pyroscope
+  - opentelemetry
+  - profiling
+  - tracing
+maintainers:
+  - name: Promptly Labs
+    url: https://github.com/promptlylabs
+dependencies:
+  # https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
+  - name: kube-prometheus-stack
+    version: 86.2.2
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: kube-prometheus-stack.enabled
+  # https://artifacthub.io/packages/helm/grafana-community/grafana
+  # (chart moved from grafana.github.io to grafana-community in January 2026)
+  - name: grafana
+    version: 12.4.4
+    repository: https://grafana-community.github.io/helm-charts
+    condition: grafana.enabled
+  # https://artifacthub.io/packages/helm/grafana-community/loki
+  # (chart moved to grafana-community in March 2026; grafana.github.io 7.x is GEL-only)
+  - name: loki
+    version: 17.3.2
+    repository: https://grafana-community.github.io/helm-charts
+    condition: loki.enabled
+  # https://artifacthub.io/packages/helm/grafana-community/tempo — single-binary chart
+  - name: tempo
+    version: 2.2.2
+    repository: https://grafana-community.github.io/helm-charts
+    condition: tempo.enabled
+  # https://artifacthub.io/packages/helm/grafana/pyroscope — NOT migrated, still grafana.github.io
+  - name: pyroscope
+    version: 2.0.3
+    repository: https://grafana.github.io/helm-charts
+    condition: pyroscope.enabled
+  # https://artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-operator
+  - name: opentelemetry-operator
+    version: 0.115.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: opentelemetry-operator.enabled
+annotations:
+  artifacthub.io/category: monitoring-logging
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/links: |
+    - name: source
+      url: https://github.com/promptlylabs/lgtm-helm-chart
+    - name: support
+      url: https://github.com/promptlylabs/lgtm-helm-chart/issues
+  artifacthub.io/signKey: |
+    fingerprint: ""
+    url: https://promptlylabs.github.io/lgtm-helm-chart/pgp_keys.asc
+  # No artifacthub.io/changes annotation: releases are mostly automated
+  # (Renovate, ADR-0008) and a static changelog would go stale — GitHub
+  # release notes are auto-generated instead.

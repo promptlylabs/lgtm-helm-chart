@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "lgtm Helm chart values",
+  "description": "Strict validation for the umbrella-owned keys (lgtm, collectors); sub-chart blocks are passed through to their own charts unvalidated.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "lgtm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "clusterName": {
+          "type": "string",
+          "description": "Added as the `cluster` resource attribute on all telemetry when set."
+        },
+        "clusterDomain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prometheus": { "type": "string" },
+            "loki": { "type": "string" },
+            "tempoQuery": { "type": "string" },
+            "tempoOtlpGrpc": { "type": "string" },
+            "pyroscope": { "type": "string" }
+          }
+        },
+        "datasources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "dashboards": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "folder": { "type": "string", "minLength": 1 },
+            "exclude": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "collectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "priorityClassName": { "type": "string" },
+        "resourceDetection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "detectors": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "config": { "type": "object" }
+          }
+        },
+        "node": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "resources": { "type": "object" },
+            "tolerations": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
+          }
+        },
+        "cluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "resources": { "type": "object" }
+          }
+        },
+        "faro": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "image": { "type": "string" },
+            "corsAllowedOrigins": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "serviceName": { "type": "string", "minLength": 1 },
+            "resources": { "type": "object" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "enabled": { "const": true } },
+                "required": ["enabled"]
+              },
+              "then": {
+                "properties": {
+                  "image": { "minLength": 1 },
+                  "corsAllowedOrigins": { "minItems": 1 }
+                },
+                "required": ["image", "corsAllowedOrigins"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "kube-prometheus-stack": { "type": "object" },
+    "grafana": { "type": "object" },
+    "loki": { "type": "object" },
+    "tempo": { "type": "object" },
+    "pyroscope": { "type": "object" },
+    "opentelemetry-operator": { "type": "object" },
+    "global": { "type": "object" }
+  }
+}

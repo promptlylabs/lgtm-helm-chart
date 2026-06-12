@@ -1,0 +1,68 @@
+# ── Grafana (standalone chart, ADR-0003) ─────────────────────────────────────
+# Provisioning is sidecar-driven and cluster-wide: any namespace can ship
+# dashboards (label grafana_dashboard: "1"), datasources (grafana_datasource:
+# "1") or alert rules (grafana_alert: "1") as ConfigMaps.
+# Defaults keep SQLite + a chart-generated admin secret; production identity,
+# database and SMTP are client-specific (see examples/values-azure.yaml).
+# Upstream values: https://github.com/grafana-community/helm-charts/tree/main/charts/grafana
+
+grafana:
+  enabled: true
+
+  fullnameOverride: grafana
+
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  # State lives in the database (SQLite by default — ephemeral!). For anything
+  # beyond evaluation either enable persistence or point grafana.ini at an
+  # external database (azure example shows postgres).
+  persistence:
+    enabled: false
+
+  serviceMonitor:
+    enabled: true
+    labels:
+      opentelemetry.io/scope: observability
+
+  sidecar:
+    # Sidecars OOM below 128Mi during dashboard sync
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      defaultFolderName: "General"
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      searchNamespace: ALL
+    alerts:
+      enabled: true
+      label: grafana_alert
+      labelValue: "1"
+      searchNamespace: ALL
+
+  grafana.ini:
+    # Allow Viewers to edit (but not save) dashboards — supports the
+    # iterate-in-UI → export JSON → commit-as-code workflow.
+    users:
+      viewers_can_edit: true
+    analytics:
+      check_for_updates: false

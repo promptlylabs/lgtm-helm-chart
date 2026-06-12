@@ -1,0 +1,65 @@
+# AWS (EKS) overlay:
+#   - Loki chunks and Tempo trace blocks in S3, keyless via IRSA (IAM Roles
+#     for Service Accounts) — no static credentials, the AWS SDK default
+#     chain picks up the web identity token
+#   - EC2/EKS resource detection on the node collector
+#
+# Replace every <placeholder> before use. The IAM roles need s3:GetObject,
+# s3:PutObject, s3:DeleteObject and s3:ListBucket on their buckets.
+# For Grafana with an external database and SSO, see values-azure.yaml for
+# the pattern (RDS + your IdP work the same way through grafana.ini).
+
+lgtm:
+  clusterName: <cluster-name>            # e.g. eks-prod
+
+collectors:
+  resourceDetection:
+    # eks → cloud.platform/k8s.cluster.name; ec2 → cloud.availability_zone,
+    # cloud.region, etc. Tune individual attributes the same way the azure
+    # example does (resource_attributes per detector).
+    detectors: [eks, ec2]
+
+loki:
+  loki:
+    storage:
+      type: s3
+      bucketNames:
+        chunks: <loki-chunks-bucket>
+        ruler: <loki-ruler-bucket>
+      s3:
+        region: <aws-region>
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: loki_index_
+            period: 24h
+    compactor:
+      retention_enabled: true
+      delete_request_store: s3
+  serviceAccount:
+    name: loki
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<loki-role>
+
+tempo:
+  tempo:
+    storage:
+      trace:
+        backend: s3
+        s3:
+          bucket: <tempo-traces-bucket>
+          endpoint: s3.<aws-region>.amazonaws.com
+        wal:
+          path: /var/tempo/wal
+  serviceAccount:
+    name: tempo
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<tempo-role>
+  # WAL + metrics-generator local-blocks only — trace blocks live in S3
+  persistence:
+    enabled: true
+    size: 15Gi

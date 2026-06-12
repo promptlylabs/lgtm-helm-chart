@@ -1,0 +1,68 @@
+name: Lint Charts
+
+on:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+
+      - name: Check generated values.yaml is in sync with values.d/
+        run: make check-values
+
+      # Adds the helm repos and vendors dependencies — must run before
+      # `ct lint`, whose internal `helm dependency build` needs the repos.
+      - name: Build chart dependencies
+        run: make deps
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2.8.0
+
+      # ct does not pick up ./ct.yaml on its own — pass it explicitly
+      # (validate-maintainers off: the maintainer is an org, not a user).
+      - name: Run chart-testing (list-changed)
+        id: list-changed
+        run: |
+          changed=$(ct list-changed --config ct.yaml --target-branch ${{ github.event.repository.default_branch }})
+          if [[ -n "$changed" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run chart-testing (lint)
+        if: steps.list-changed.outputs.changed == 'true'
+        run: ct lint --config ct.yaml --target-branch ${{ github.event.repository.default_branch }}
+
+      - name: Helm lint
+        run: helm lint charts/lgtm/
+
+      - name: Helm template (default values)
+        run: helm template lgtm charts/lgtm/ --namespace observability > /dev/null
+
+      - name: Helm template (collectors disabled)
+        run: helm template lgtm charts/lgtm/ --namespace observability --set collectors.enabled=false > /dev/null
+
+      - name: Helm template (example overlays)
+        run: |
+          for f in charts/lgtm/examples/values-*.yaml; do
+            echo "rendering $f"
+            helm template lgtm charts/lgtm/ --namespace observability -f "$f" > /dev/null
+          done
+
+      - name: Set up kubeconform
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+        env:
+          GOBIN: /usr/local/bin
+
+      - name: Validate manifests with kubeconform
+        run: make kubeconform

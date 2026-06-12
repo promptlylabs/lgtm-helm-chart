@@ -1,0 +1,50 @@
+# ── OpenTelemetry Operator ───────────────────────────────────────────────────
+# Manages the OpenTelemetryCollector CRs shipped by this chart (10-collectors).
+# Webhook certificates are Helm-generated (no cert-manager dependency);
+# recreate=false avoids cert churn on every ArgoCD render.
+# Upstream values: https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator
+
+opentelemetry-operator:
+  enabled: true
+
+  fullnameOverride: otel-operator
+
+  # CRDs are rendered as chart templates and upgraded with the release. If the
+  # cluster already runs an OTel operator, disable this whole dependency (see
+  # the chart README's adoption notes).
+  crds:
+    create: true
+
+  manager:
+    serviceAccount:
+      create: true
+      name: otel-operator
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    # collectorImage defaults to the opentelemetry-collector-k8s distribution
+    # matching the operator version — overridable per collector CR via
+    # collectors.image.
+
+  admissionWebhooks:
+    create: true
+    # Strict validation: a broken collector CR fails loudly instead of being
+    # silently skipped. First plain-Helm install: see collectors.enabled.
+    failurePolicy: Fail
+    certManager:
+      enabled: false
+    autoGenerateCert:
+      enabled: true
+      # Don't regenerate the webhook cert on every upgrade/render — under
+      # ArgoCD that means perpetual diff and cert churn.
+      recreate: false
+    timeoutSeconds: 10
+
+  # Watch collectors cluster-wide.
+  clusterRole:
+    create: true
+  role:
+    create: false

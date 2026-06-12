@@ -1,0 +1,190 @@
+{{- /*
+RBAC for the collectors and their target allocators.
+
+The operator auto-creates the ServiceAccounts (named <cr-name>-collector and
+<cr-name>-targetallocator) but not the ClusterRoles/Bindings they need:
+  - target allocators discover ServiceMonitors/PodMonitors cluster-wide
+  - the cluster collector reads cluster state (k8sclusterreceiver) and
+    events (k8seventsreceiver), and scrapes the apiserver /metrics
+  - the node collector reads node stats (kubeletstats) and pod metadata
+    (k8sattributes)
+
+ClusterRole/Binding names are release-prefixed (cluster-scoped, must not
+collide); the subjects reference the operator-generated SA names, which are
+fixed because the CR names are fixed.
+*/ -}}
+{{- if .Values.collectors.enabled }}
+{{- if or .Values.collectors.node.enabled .Values.collectors.cluster.enabled }}
+---
+{{- /*
+One shared ClusterRole for both target allocators — the canonical permission
+set from the operator's allocator docs (with prometheusCR enabled, the
+operator's admission webhook audits for exactly these rules and warns about
+anything missing).
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-otel-targetallocator
+  labels:
+    app: opentelemetry-collector
+    component: target-allocator
+    {{- include "lgtm.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "podmonitors"]
+    verbs: ["*"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["probes", "scrapeconfigs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes", "nodes/metrics", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-otel-targetallocator
+  labels:
+    app: opentelemetry-collector
+    component: target-allocator
+    {{- include "lgtm.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-otel-targetallocator
+subjects:
+  {{- if .Values.collectors.node.enabled }}
+  - kind: ServiceAccount
+    name: otel-node-collector-targetallocator
+    namespace: {{ .Release.Namespace }}
+  {{- end }}
+  {{- if .Values.collectors.cluster.enabled }}
+  - kind: ServiceAccount
+    name: otel-cluster-collector-targetallocator
+    namespace: {{ .Release.Namespace }}
+  {{- end }}
+{{- end }}
+{{- if .Values.collectors.cluster.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-otel-cluster-collector
+  labels:
+    app: opentelemetry-collector
+    component: collector
+    {{- include "lgtm.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - pods
+      - namespaces
+      - services
+      - resourcequotas
+      - replicationcontrollers
+      - persistentvolumes
+      - persistentvolumeclaims
+    verbs: ["list", "watch", "get"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["list", "watch", "get"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["list", "watch", "get"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["list", "watch", "get"]
+  # k8seventsreceiver
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs: ["list", "watch", "get"]
+  - apiGroups: ["events.k8s.io"]
+    resources:
+      - events
+    verbs: ["list", "watch", "get"]
+  # apiserver /metrics scraping
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-otel-cluster-collector
+  labels:
+    app: opentelemetry-collector
+    component: collector
+    {{- include "lgtm.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-otel-cluster-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-cluster-collector-collector
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.collectors.node.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-otel-node-collector
+  labels:
+    app: opentelemetry-collector
+    component: collector
+    {{- include "lgtm.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/stats
+      - nodes/metrics  # kubelet /metrics/cadvisor endpoint
+      - nodes/proxy    # kubelet API access
+      - pods
+      - namespaces     # k8sattributes processor
+    verbs: ["list", "watch", "get"]
+  # k8sattributes resolves deployment names through ReplicaSets
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-otel-node-collector
+  labels:
+    app: opentelemetry-collector
+    component: collector
+    {{- include "lgtm.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-otel-node-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-node-collector-collector
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

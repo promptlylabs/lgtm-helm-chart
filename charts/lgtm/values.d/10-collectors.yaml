@@ -1,0 +1,72 @@
+# ── OpenTelemetry collectors (umbrella-owned OpenTelemetryCollector CRs) ─────
+# Three collectors implement the OTLP-push, scrape-less architecture (ADR-0005):
+#   node    — DaemonSet: OTLP ingest, hostmetrics, kubeletstats, container logs,
+#             per-node scraping of unlabelled ServiceMonitors/PodMonitors
+#   cluster — StatefulSet (1 replica): k8s_cluster + k8s_events receivers,
+#             ServiceMonitors labelled opentelemetry.io/scope: cluster
+#   faro    — Deployment: browser telemetry (Grafana Faro SDK), off by default
+
+collectors:
+  # Master switch. The collector CRs need the opentelemetry-operator webhook to
+  # be ready, so a first install with plain Helm should run with this set to
+  # false, then upgrade with it enabled (ArgoCD with retries converges on its
+  # own — see the chart README).
+  enabled: true
+
+  # Override the collector image for the node and cluster collectors. Empty
+  # uses the operator default (opentelemetry-collector-k8s distribution).
+  image: ""
+
+  # PriorityClass for collector pods. Must exist in the cluster — left empty
+  # by default since PriorityClasses are cluster-specific.
+  priorityClassName: ""
+
+  # resourcedetection processor for the node collector. Disabled when no
+  # detectors are configured. Example for Azure (see examples/values-azure.yaml):
+  #   detectors: [azure]
+  #   config: { azure: { resource_attributes: { cloud.availability_zone: { enabled: true } } } }
+  resourceDetection:
+    detectors: []
+    config: {}
+
+  node:
+    enabled: true
+    resources:
+      limits:
+        memory: 768Mi
+      requests:
+        cpu: 50m
+        memory: 384Mi
+    # DaemonSet must also cover tainted system/critical-addons node pools.
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+
+  cluster:
+    enabled: true
+    resources:
+      limits:
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 256Mi
+
+  faro:
+    enabled: false
+    # REQUIRED when enabled: the faroreceiver is only in the contrib
+    # distribution, e.g.
+    # ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:<tag>
+    image: ""
+    # Browser origins allowed to POST telemetry (CORS is enforced at the
+    # receiver). e.g. ["https://app.example.com", "http://localhost:3000"]
+    corsAllowedOrigins: []
+    # service.name attached to all Faro telemetry — match the frontend's name
+    # for frontend↔backend correlation.
+    serviceName: webportal
+    resources:
+      limits:
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi

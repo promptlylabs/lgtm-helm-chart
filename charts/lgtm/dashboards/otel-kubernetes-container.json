@@ -1,0 +1,541 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "enable": true,
+        "expr": "increase(argocd_app_sync_total{namespace=\"argocd\", phase=\"Succeeded\", name=~\".*$namespace.*\"}[$__rate_interval]) > 0",
+        "hide": false,
+        "iconColor": "green",
+        "name": "ArgoCD Sync",
+        "step": "60s",
+        "tagKeys": "name",
+        "textFormat": "",
+        "titleFormat": "Sync: {{name}}",
+        "type": "dashboard",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "description": "Per-container CPU and memory usage vs requests and limits — drill-down from OTel Kubernetes Namespace dashboard",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false,
+      "title": "← Back to Namespace",
+      "tooltip": "Return to namespace-level overview",
+      "type": "link",
+      "url": "/d/otel-kubernetes-namespace?var-namespace=$namespace"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "← Back to Cluster",
+      "tooltip": "Return to cluster-wide overview",
+      "type": "link",
+      "url": "/d/otel-kubernetes-cluster?var-namespace=$namespace"
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "repeat": "container",
+      "title": "Container: $container",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/^Request/" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/^Limit/" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "CPU — $container",
+      "description": "CPU usage vs request and limit for this container",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "{__name__=\"container.cpu.usage\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\", \"k8s.container.name\"=~\"$container\"}",
+          "legendFormat": "Usage — {{k8s.pod.name}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "max by(\"k8s.pod.name\", \"k8s.container.name\") ({__name__=\"k8s.container.cpu_request\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\", \"k8s.container.name\"=~\"$container\"})",
+          "legendFormat": "Request — {{k8s.pod.name}}",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "max by(\"k8s.pod.name\", \"k8s.container.name\") ({__name__=\"k8s.container.cpu_limit\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\", \"k8s.container.name\"=~\"$container\"})",
+          "legendFormat": "Limit — {{k8s.pod.name}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/^Request/" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/^Limit/" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max", "mean"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Memory — $container",
+      "description": "Memory working set vs request and limit for this container",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "{__name__=\"container.memory.working_set\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\", \"k8s.container.name\"=~\"$container\"}",
+          "legendFormat": "Usage — {{k8s.pod.name}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "max by(\"k8s.pod.name\", \"k8s.container.name\") ({__name__=\"k8s.container.memory_request\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\", \"k8s.container.name\"=~\"$container\"})",
+          "legendFormat": "Request — {{k8s.pod.name}}",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "max by(\"k8s.pod.name\", \"k8s.container.name\") ({__name__=\"k8s.container.memory_limit\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\", \"k8s.container.name\"=~\"$container\"})",
+          "legendFormat": "Limit — {{k8s.pod.name}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 200,
+      "title": "Overview",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+          "id": 3,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Container Restarts Over Time",
+          "description": "Container restart count over time — spikes indicate crash loops or OOM kills",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.restarts\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "legendFormat": "{{k8s.pod.name}}/{{k8s.container.name}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+          "id": 4,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max", "mean"], "displayMode": "table", "placement": "bottom" },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Container Memory Major Page Faults",
+          "description": "Rate of major page faults per container — spikes indicate memory pressure forcing disk reads (from kubeletstatsreceiver container.memory.major_page_faults metric, deriv over 5m)",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "deriv({__name__=\"container.memory.major_page_faults\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}[5m])",
+              "legendFormat": "{{k8s.pod.name}}/{{k8s.container.name}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": { "type": "auto" },
+                "inspect": false
+              },
+              "noValue": "-"
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "CPU Request" },
+                "properties": [{ "id": "unit", "value": "suffix: cores" }, { "id": "decimals", "value": 2 }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "CPU Limit" },
+                "properties": [{ "id": "unit", "value": "suffix: cores" }, { "id": "decimals", "value": 2 }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Memory Request" },
+                "properties": [{ "id": "unit", "value": "bytes" }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Memory Limit" },
+                "properties": [{ "id": "unit", "value": "bytes" }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Eph Storage Request" },
+                "properties": [{ "id": "unit", "value": "bytes" }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Eph Storage Limit" },
+                "properties": [{ "id": "unit", "value": "bytes" }]
+              }
+            ]
+          },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+          "id": 5,
+          "options": {
+            "cellHeight": "sm",
+            "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+            "showHeader": true,
+            "sortBy": [{ "desc": false, "displayName": "Pod" }]
+          },
+          "title": "Container Resource Requests & Limits",
+          "description": "Per-container CPU and memory requests and limits for all pods in this namespace",
+          "type": "table",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.cpu_request\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.cpu_limit\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "B"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.memory_request\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "C"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.memory_limit\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "D"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.ephemeralstorage_request\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "E"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"k8s.container.ephemeralstorage_limit\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "F"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "{__name__=\"container.cpu.usage\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "G"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "groupBy",
+              "options": {
+                "fields": {
+                  "k8s.pod.name": { "aggregations": [], "operation": "groupby" },
+                  "k8s.container.name": { "aggregations": [], "operation": "groupby" },
+                  "k8s.node.name": { "aggregations": [], "operation": "groupby" },
+                  "Value #A": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+                  "Value #B": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+                  "Value #C": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+                  "Value #D": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+                  "Value #E": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+                  "Value #F": { "aggregations": ["lastNotNull"], "operation": "aggregate" },
+                  "Value #G": { "aggregations": ["lastNotNull"], "operation": "aggregate" }
+                }
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Value #G (lastNotNull)": true,
+                  "cloud.availability_zone": true
+                },
+                "indexByName": {
+                  "k8s.pod.name": 0,
+                  "k8s.container.name": 1,
+                  "k8s.node.name": 2,
+                  "Value #A (lastNotNull)": 3,
+                  "Value #B (lastNotNull)": 4,
+                  "Value #C (lastNotNull)": 5,
+                  "Value #D (lastNotNull)": 6,
+                  "Value #E (lastNotNull)": 7,
+                  "Value #F (lastNotNull)": 8
+                },
+                "renameByName": {
+                  "k8s.pod.name": "Pod",
+                  "k8s.container.name": "Container",
+                  "k8s.node.name": "Node",
+                  "Value #A (lastNotNull)": "CPU Request",
+                  "Value #B (lastNotNull)": "CPU Limit",
+                  "Value #C (lastNotNull)": "Memory Request",
+                  "Value #D (lastNotNull)": "Memory Limit",
+                  "Value #E (lastNotNull)": "Eph Storage Request",
+                  "Value #F (lastNotNull)": "Eph Storage Limit"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "timepicker": { "refresh_intervals": ["30s", "1m", "5m", "15m"] },
+  "tags": ["platform", "kubernetes", "otel"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values({__name__=\"k8s.pod.phase\"}, \"k8s.namespace.name\")",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Namespace",
+        "multi": false,
+        "name": "namespace",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({__name__=\"k8s.pod.phase\"}, \"k8s.namespace.name\")",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values({__name__=\"k8s.pod.phase\", \"k8s.namespace.name\"=\"$namespace\"}, \"k8s.pod.name\")",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Pod",
+        "multi": true,
+        "name": "pod",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({__name__=\"k8s.pod.phase\", \"k8s.namespace.name\"=\"$namespace\"}, \"k8s.pod.name\")",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values({__name__=\"container.cpu.usage\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}, \"k8s.container.name\")",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Container",
+        "multi": true,
+        "name": "container",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({__name__=\"container.cpu.usage\", \"k8s.namespace.name\"=\"$namespace\", \"k8s.pod.name\"=~\"$pod\"}, \"k8s.container.name\")",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "utc",
+  "title": "OTel Container Detail",
+  "uid": "otel-kubernetes-container"
+}

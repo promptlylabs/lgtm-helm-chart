@@ -1,0 +1,188 @@
+{{- /*
+Grafana datasources with full signal correlations, provisioned via the
+datasources sidecar (label grafana_datasource: "1").
+
+The $$ sequences are Grafana provisioning-file escapes for a literal $ —
+$${namespace} reaches Grafana as ${namespace}, $$__tags as $__tags. Helm does
+not interpret them.
+*/ -}}
+{{- if .Values.lgtm.datasources.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-grafana-datasources
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_datasource: "1"
+    {{- include "lgtm.labels" . | nindent 4 }}
+data:
+  lgtm-datasources.yaml: |-
+    apiVersion: 1
+    datasources:
+      {{- /* Each datasource renders only when its component is in this
+      release OR an external endpoint is configured via lgtm.endpoints.* */}}
+      {{- if or (index .Values "kube-prometheus-stack" "enabled") .Values.lgtm.endpoints.prometheus }}
+      # Prometheus — exemplars point at Tempo; correlations link metrics to logs
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: {{ include "lgtm.prometheus.endpoint" . }}
+        access: proxy
+        isDefault: true
+        editable: false
+        jsonData:
+          httpMethod: POST
+          timeInterval: 30s
+          exemplarTraceIdDestinations:
+            - datasourceUid: tempo
+              name: traceID
+        correlations:
+          # Metrics → Logs: click a pod name → see its logs
+          - targetUID: loki
+            label: "Pod logs"
+            description: "View logs in Loki for this pod"
+            config:
+              type: query
+              target:
+                expr: '{k8s_namespace_name="$${namespace}", k8s_pod_name="$${pod}"}'
+                queryType: range
+              field: "k8s.pod.name"
+              transformations:
+                - type: regex
+                  expression: "(?<pod>.+)"
+                - type: regex
+                  field: "k8s.namespace.name"
+                  expression: "(?<namespace>.+)"
+          # Metrics → Logs: click a namespace → see all logs
+          - targetUID: loki
+            label: "Namespace logs"
+            description: "View all logs in Loki for this namespace"
+            config:
+              type: query
+              target:
+                expr: '{k8s_namespace_name="$${namespace}"}'
+                queryType: range
+              field: "k8s.namespace.name"
+              transformations:
+                - type: regex
+                  expression: "(?<namespace>.+)"
+      {{- end }}
+
+      {{- if or .Values.loki.enabled .Values.lgtm.endpoints.loki }}
+      # Loki — derived trace links plus reverse correlations (Logs → Metrics)
+      - name: Loki
+        type: loki
+        uid: loki
+        url: {{ include "lgtm.loki.endpoint" . }}
+        access: proxy
+        editable: false
+        isDefault: false
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - datasourceUid: tempo
+              matcherType: label
+              matcherRegex: trace_id
+              name: TraceID
+              url: "$${__value.raw}"
+              urlDisplayLabel: "View Trace"
+        correlations:
+          # Logs → Metrics: link on log line → see pod CPU/memory
+          - targetUID: prometheus
+            label: "Pod metrics"
+            description: "View CPU and memory metrics for this pod"
+            config:
+              type: query
+              target:
+                expr: '{"k8s.pod.cpu.usage", "k8s.namespace.name"="$${namespace}", "k8s.pod.name"="$${pod}"}'
+                queryType: range
+              field: "Line"
+              transformations:
+                - type: regex
+                  field: "labels"
+                  expression: '"k8s_pod_name": ?"(?<pod>[^"]+)"'
+                - type: regex
+                  field: "labels"
+                  expression: '"k8s_namespace_name": ?"(?<namespace>[^"]+)"'
+          # Logs → Metrics: link on log line → see namespace overview
+          - targetUID: prometheus
+            label: "Namespace metrics"
+            description: "View pod phase overview for this namespace"
+            config:
+              type: query
+              target:
+                expr: '{"k8s.pod.phase", "k8s.namespace.name"="$${namespace}"}'
+                queryType: range
+              field: "Line"
+              transformations:
+                - type: regex
+                  field: "labels"
+                  expression: '"k8s_namespace_name": ?"(?<namespace>[^"]+)"'
+      {{- end }}
+
+      {{- if or .Values.tempo.enabled .Values.lgtm.endpoints.tempoQuery }}
+      # Tempo — distributed tracing with links to logs, metrics and profiles
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        url: {{ include "lgtm.tempo.queryEndpoint" . }}
+        access: proxy
+        editable: false
+        isDefault: false
+        jsonData:
+          httpMethod: GET
+          # Tempo's query API (3200) is HTTP-only — disable gRPC streaming so
+          # grafana-apiserver doesn't log connection errors.
+          streamingEnabled:
+            search: false
+            metrics: false
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            filterByTraceID: false
+            filterBySpanID: false
+            # service.name omitted — trace service names don't match log labels
+            # (they come from different sources)
+            tags:
+              - key: "k8s.namespace.name"
+                value: "k8s_namespace_name"
+              - key: "k8s.pod.name"
+                value: "k8s_pod_name"
+          tracesToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            tags:
+              - key: "service.name"
+                value: "service"
+            queries:
+              - name: "Request rate"
+                query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))'
+              - name: "Error rate"
+                query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags, status_code="STATUS_CODE_ERROR"}[5m]))'
+              - name: "Duration (p95)"
+                query: 'histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])) by (le))'
+          nodeGraph:
+            enabled: true
+          serviceMap:
+            datasourceUid: prometheus
+          tracesToProfiles:
+            datasourceUid: pyroscope
+            profileTypeId: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+            tags:
+              - key: "service.name"
+                value: "service_name"
+      {{- end }}
+
+      {{- if or .Values.pyroscope.enabled .Values.lgtm.endpoints.pyroscope }}
+      # Pyroscope — continuous profiling
+      - name: Pyroscope
+        type: grafana-pyroscope-datasource
+        uid: pyroscope
+        url: {{ include "lgtm.pyroscope.endpoint" . }}
+        access: proxy
+        editable: false
+        isDefault: false
+      {{- end }}
+{{- end }}

@@ -1,0 +1,169 @@
+{{- /*
+Cluster collector — single-replica StatefulSet (ADR-0005):
+  collects  cluster-level metrics (k8sclusterreceiver — replaces
+            kube-state-metrics) and Kubernetes events as structured logs
+  scrapes   ServiceMonitors/PodMonitors labelled opentelemetry.io/scope:
+            cluster (apiserver, CoreDNS) via the target allocator
+  exports   metrics → Prometheus OTLP, event logs → Loki OTLP
+
+Single replica is required: k8seventsreceiver duplicates events otherwise.
+*/ -}}
+{{- if and .Values.collectors.enabled .Values.collectors.cluster.enabled }}
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-cluster-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: opentelemetry-collector
+    mode: statefulset
+    {{- include "lgtm.labels" . | nindent 4 }}
+  annotations:
+    # First sync races the operator webhook/CRDs — let ArgoCD retry converge.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,ServerSideApply=true
+spec:
+  # StatefulSet mode — Deployment mode does not support the target allocator
+  mode: statefulset
+  replicas: 1
+
+  {{- with .Values.collectors.image }}
+  image: {{ . }}
+  {{- end }}
+
+  {{- with .Values.collectors.priorityClassName }}
+  priorityClassName: {{ . }}
+  {{- end }}
+
+  targetAllocator:
+    enabled: true
+    allocationStrategy: consistent-hashing
+    # Positive selector: only the cluster-scoped component ServiceMonitors.
+    prometheusCR:
+      enabled: true
+      serviceMonitorSelector:
+        matchLabels:
+          opentelemetry.io/scope: cluster
+      podMonitorSelector:
+        matchLabels:
+          opentelemetry.io/scope: cluster
+    resources:
+      limits:
+        memory: 64Mi
+      requests:
+        cpu: 5m
+        memory: 32Mi
+
+  config:
+    receivers:
+      # Cluster metrics (replaces kube-state-metrics)
+      k8s_cluster:
+        collection_interval: 30s
+        node_conditions_to_report:
+          - Ready
+          - MemoryPressure
+          - DiskPressure
+          - PIDPressure
+          - NetworkUnavailable
+        allocatable_types_to_report:
+          - cpu
+          - memory
+          - ephemeral-storage
+          - pods
+        # Cardinality control: only metrics the shipped dashboards use.
+        metrics:
+          k8s.replicaset.available:
+            enabled: false  # deployment-level metrics cover this
+          k8s.replicaset.desired:
+            enabled: false
+          k8s.daemonset.current_scheduled_nodes:
+            enabled: false  # desired + ready already dashboarded
+          k8s.job.max_parallel_pods:
+            enabled: false  # static spec value
+          k8s.container.storage_limit:
+            enabled: false  # ephemeralstorage_* used instead
+          k8s.container.storage_request:
+            enabled: false
+          k8s.replication_controller.available:
+            enabled: false  # legacy resource, none exist
+          k8s.replication_controller.desired:
+            enabled: false
+          k8s.container.status.reason:
+            enabled: true   # OOMKilled / CrashLoopBackOff / ErrImagePull tracking
+
+      # Cluster-scoped component scraping — the target allocator replaces this
+      # placeholder with discovered targets (scope=cluster ServiceMonitors).
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: k8s-components
+              scrape_interval: 30s
+
+      # Kubernetes events as structured logs (Normal→INFO, Warning→WARN)
+      k8s_events:
+        auth_type: serviceAccount
+
+    processors:
+      batch:
+        send_batch_size: 1024
+        timeout: 10s
+
+      # Must be first in every pipeline (fail-safe); ~80% of the 512Mi limit
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 400
+        spike_limit_mib: 128
+
+      resource:
+        attributes:
+          {{- if .Values.lgtm.clusterName }}
+          - key: cluster
+            value: {{ .Values.lgtm.clusterName | quote }}
+            action: upsert
+          {{- end }}
+          - key: collector.mode
+            value: statefulset
+            action: upsert
+
+      # Events pipeline: set service.name so Loki doesn't show unknown_service
+      resource/events:
+        attributes:
+          - key: service.name
+            value: k8s-events
+            action: upsert
+          {{- if .Values.lgtm.clusterName }}
+          - key: cluster
+            value: {{ .Values.lgtm.clusterName | quote }}
+            action: upsert
+          {{- end }}
+          - key: collector.mode
+            value: statefulset
+            action: upsert
+
+    exporters:
+      # Prometheus native OTLP ingestion (HTTP, not gRPC)
+      otlp_http/metrics:
+        metrics_endpoint: {{ include "lgtm.prometheus.otlpEndpoint" . }}/v1/metrics
+
+      # Loki native OTLP ingestion
+      otlp_http/loki:
+        endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
+
+      debug:
+        verbosity: basic
+        sampling_initial: 5
+        sampling_thereafter: 200
+
+    service:
+      pipelines:
+        metrics:
+          receivers: [k8s_cluster, prometheus]
+          processors: [memory_limiter, batch, resource]
+          exporters: [otlp_http/metrics, debug]
+        logs:
+          receivers: [k8s_events]
+          processors: [memory_limiter, batch, resource/events]
+          exporters: [otlp_http/loki]
+
+  resources:
+    {{- toYaml .Values.collectors.cluster.resources | nindent 4 }}
+{{- end }}

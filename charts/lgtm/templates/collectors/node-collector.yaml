@@ -1,0 +1,361 @@
+{{- /*
+Node collector — DaemonSet, one pod per node (ADR-0005):
+  receives  OTLP from application pods (operator service has
+            internalTrafficPolicy: Local — apps hit their node's collector)
+  collects  host metrics, kubelet/cAdvisor stats, container logs
+  scrapes   ServiceMonitors/PodMonitors WITHOUT an opentelemetry.io/scope
+            label, per-node, via the target allocator
+  exports   metrics → Prometheus OTLP, logs → Loki OTLP, traces → Tempo gRPC
+*/ -}}
+{{- if and .Values.collectors.enabled .Values.collectors.node.enabled }}
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-node-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: opentelemetry-collector
+    mode: daemonset
+    {{- include "lgtm.labels" . | nindent 4 }}
+  annotations:
+    # First sync races the operator webhook/CRDs — let ArgoCD retry converge.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,ServerSideApply=true
+spec:
+  mode: daemonset
+
+  {{- with .Values.collectors.image }}
+  image: {{ . }}
+  {{- end }}
+
+  {{- with .Values.collectors.priorityClassName }}
+  priorityClassName: {{ . }}
+  {{- end }}
+
+  # Target Allocator — per-node strategy: each DaemonSet pod scrapes only
+  # targets on its own node. Targets without a node assignment are ignored
+  # (control-plane components are the cluster collector's job).
+  targetAllocator:
+    enabled: true
+    allocationStrategy: per-node
+    # Negative selector: scrape everything EXCEPT labelled scopes —
+    # application ServiceMonitors need no labels at all.
+    #   scope=cluster:       K8s components → cluster collector
+    #   scope=observability: the stack itself → meta-monitoring (future)
+    prometheusCR:
+      enabled: true
+      serviceMonitorSelector:
+        matchExpressions:
+          - key: opentelemetry.io/scope
+            operator: DoesNotExist
+      podMonitorSelector:
+        matchExpressions:
+          - key: opentelemetry.io/scope
+            operator: DoesNotExist
+    resources:
+      limits:
+        memory: 64Mi
+      requests:
+        cpu: 5m
+        memory: 32Mi
+
+  # ServiceAccount/ClusterRole for the collector and allocator pods are
+  # auto-created by the operator (spec.serviceAccount unset); the extra
+  # permissions they need are in rbac.yaml.
+
+  config:
+    receivers:
+      # OTLP — application traces; apps send to
+      # otel-node-collector-collector.<namespace>.svc:4317 (gRPC) / :4318 (HTTP)
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+
+      # Host metrics from the node filesystem (replaces node-exporter)
+      hostmetrics:
+        collection_interval: 30s
+        root_path: /hostfs
+        scrapers:
+          cpu:
+            metrics:
+              system.cpu.utilization:
+                enabled: true
+          memory:
+            metrics:
+              system.memory.utilization:
+                enabled: true
+          disk:
+            metrics:
+              system.disk.merged:
+                enabled: false  # OS-level merged I/O; too low-level, not in any dashboard
+              system.disk.operation_time:
+                enabled: false  # system.disk.io_time used in the host-metrics dashboard instead
+              system.disk.weighted_io_time:
+                enabled: false  # same — io_time is simpler and sufficient
+          # Exclude EFI partitions: vfat with restrictive dmask causes statfs() EACCES
+          filesystem:
+            exclude_mount_points:
+              mount_points: ["/boot/efi"]
+              match_type: strict
+            exclude_fs_types:
+              fs_types: ["vfat"]
+              match_type: strict
+            metrics:
+              system.filesystem.utilization:
+                enabled: true
+              system.filesystem.usage:
+                enabled: false  # utilization (%) normalizes across disk sizes
+          # Empty objects (not null) — the operator webhook warns on null
+          # config nodes and kustomize/kubectl edit choke on them.
+          network: {}
+          load: {}
+
+      # Kubelet/cAdvisor stats with OTel semantic names (k8s.pod.cpu.usage …);
+      # sole source of kubelet metrics — the kubelet ServiceMonitor is disabled.
+      kubeletstats:
+        collection_interval: 30s
+        auth_type: serviceAccount
+        endpoint: "https://${env:K8S_NODE_NAME}:10250"
+        insecure_skip_verify: true  # kubelets use self-signed certs
+        metric_groups:
+          - node
+          - pod
+          - container
+          - volume
+        # k8s.volume.type also adds k8s.volume.name and k8s.persistentvolumeclaim.name
+        extra_metadata_labels:
+          - container.id
+          - k8s.volume.type
+        # Deprecated attributes warn when left enabled
+        resource_attributes:
+          aws.volume.id:
+            enabled: false
+          fs.type:
+            enabled: false
+          gce.pd.name:
+            enabled: false
+          glusterfs.endpoints.name:
+            enabled: false
+          glusterfs.path:
+            enabled: false
+          partition:
+            enabled: false
+        # Cardinality control: only metrics the shipped dashboards use.
+        # Working-set memory is tracked instead of usage/rss (page-cache
+        # inflation); gauges instead of cumulative counters; derivable
+        # metrics dropped.
+        metrics:
+          k8s.node.cpu.time:
+            enabled: false
+          k8s.node.memory.usage:
+            enabled: false
+          k8s.node.memory.rss:
+            enabled: false
+          k8s.node.memory.available:
+            enabled: false
+          k8s.node.memory.page_faults:
+            enabled: false
+          k8s.node.filesystem.available:
+            enabled: false
+          k8s.pod.cpu.time:
+            enabled: false
+          k8s.pod.memory.usage:
+            enabled: false
+          k8s.pod.memory.rss:
+            enabled: false
+          k8s.pod.memory.available:
+            enabled: false
+          k8s.pod.memory.page_faults:
+            enabled: false
+          k8s.pod.memory.major_page_faults:
+            enabled: false
+          k8s.pod.filesystem.available:
+            enabled: false
+          container.cpu.time:
+            enabled: false
+          container.memory.usage:
+            enabled: false
+          container.memory.rss:
+            enabled: false
+          container.memory.available:
+            enabled: false
+          container.memory.page_faults:
+            enabled: false
+          container.filesystem.available:
+            enabled: false
+          container.filesystem.capacity:
+            enabled: false
+          container.filesystem.usage:
+            enabled: false
+
+      # Application scraping — the target allocator replaces this placeholder
+      # with per-node discovered targets.
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: applications
+              scrape_interval: 30s
+
+      # Container logs from the node filesystem (CRI format)
+      filelog:
+        include:
+          - /var/log/pods/*/*/*.log
+        exclude:
+          - /var/log/pods/*/otc-container/*.log
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        operators:
+          - type: container
+            id: container-parser
+          # Parse JSON bodies so trace context can be promoted (non-JSON logs
+          # pass through unmodified)
+          - type: json_parser
+            id: json-body-parser
+            if: 'body matches "^\\{"'
+            parse_from: body
+            on_error: send
+
+    processors:
+      batch:
+        send_batch_size: 1024
+        timeout: 10s
+
+      # Percentage mode tracks the container's cgroup limit, so it auto-scales
+      # with limits.memory — no second hardcoded value to keep in sync.
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+
+      {{- if .Values.collectors.resourceDetection.detectors }}
+      # Cloud metadata enrichment (collectors.resourceDetection)
+      resourcedetection:
+        detectors:
+          {{- toYaml .Values.collectors.resourceDetection.detectors | nindent 10 }}
+        timeout: 5s
+        override: false
+        {{- with .Values.collectors.resourceDetection.config }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+
+      # Pod/namespace metadata enrichment for logs and traces
+      k8s_attributes:
+        auth_type: serviceAccount
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.deployment.name
+            - k8s.daemonset.name
+            - k8s.statefulset.name
+            - k8s.node.name
+            - k8s.container.name
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: connection
+
+      # Promote traceId/spanId from JSON log attributes to the OTLP LogRecord
+      # fields — Loki stores them as trace_id/span_id structured metadata,
+      # which the Grafana derived field links on.
+      transform/trace_context:
+        log_statements:
+          - context: log
+            statements:
+              - set(trace_id.string, attributes["traceId"]) where attributes["traceId"] != nil
+              - set(span_id.string, attributes["spanId"]) where attributes["spanId"] != nil
+
+      resource:
+        attributes:
+          {{- if .Values.lgtm.clusterName }}
+          - key: cluster
+            value: {{ .Values.lgtm.clusterName | quote }}
+            action: upsert
+          {{- end }}
+          - key: collector.mode
+            value: daemonset
+            action: upsert
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
+
+    exporters:
+      # Prometheus native OTLP ingestion (HTTP, not gRPC)
+      otlp_http/metrics:
+        metrics_endpoint: {{ include "lgtm.prometheus.otlpEndpoint" . }}/v1/metrics
+
+      # Loki native OTLP ingestion
+      otlp_http/loki:
+        endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
+
+      otlp_grpc/tempo:
+        endpoint: {{ include "lgtm.tempo.otlpGrpcEndpoint" . }}
+        tls:
+          insecure: true
+
+      debug:
+        verbosity: basic
+        sampling_initial: 5
+        sampling_thereafter: 200
+
+    service:
+      pipelines:
+        metrics:
+          receivers: [hostmetrics, prometheus, kubeletstats]
+          processors: [memory_limiter{{- if .Values.collectors.resourceDetection.detectors }}, resourcedetection{{- end }}, batch, resource]
+          exporters: [otlp_http/metrics, debug]
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, k8s_attributes, transform/trace_context, resource, batch]
+          exporters: [otlp_http/loki]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8s_attributes, resource, batch]
+          exporters: [otlp_grpc/tempo]
+
+  env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+
+  # Host network for accurate node metrics
+  hostNetwork: true
+
+  volumes:
+    - name: hostfs
+      hostPath:
+        path: /
+    - name: varlogpods
+      hostPath:
+        path: /var/log/pods
+
+  volumeMounts:
+    - name: hostfs
+      mountPath: /hostfs
+      readOnly: true
+      mountPropagation: HostToContainer
+    - name: varlogpods
+      mountPath: /var/log/pods
+      readOnly: true
+
+  # GOMEMLIMIT is auto-injected from limits.memory by the operator, so the Go
+  # GC soft limit tracks the values automatically.
+  resources:
+    {{- toYaml .Values.collectors.node.resources | nindent 4 }}
+
+  {{- with .Values.collectors.node.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

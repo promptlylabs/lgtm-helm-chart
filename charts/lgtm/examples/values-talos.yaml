@@ -1,0 +1,38 @@
+# Talos Linux overlay (bare-metal / no cloud blob storage):
+#   - storage stays on the chart's filesystem/PVC defaults — the cluster
+#     needs a default StorageClass (e.g. local-path-provisioner, OpenEBS,
+#     or Rook/Ceph; with Rook you can later switch Loki/Tempo to its S3
+#     endpoint using the values-aws.yaml keys plus a custom s3.endpoint)
+#   - the node collector tolerates the control-plane taint so control-plane
+#     nodes are observed too (Talos runs a vanilla taint on them)
+#
+# REQUIRED MANUAL STEP — Pod Security admission: Talos enforces the
+# `baseline` Pod Security Standard on all namespaces by default, and the
+# node collector needs hostNetwork + hostPath mounts (/, /var/log/pods),
+# which baseline forbids. Label the namespace before installing:
+#
+#   kubectl label namespace observability \
+#     pod-security.kubernetes.io/enforce=privileged
+#
+# or with ArgoCD, on the Application:
+#
+#   syncPolicy:
+#     managedNamespaceMetadata:
+#       labels:
+#         pod-security.kubernetes.io/enforce: privileged
+
+lgtm:
+  clusterName: <cluster-name>            # e.g. talos-prod
+
+collectors:
+  # No cloud metadata service — leave resource detection off (default).
+  node:
+    # Overriding tolerations REPLACES the chart default list, so keep the
+    # CriticalAddonsOnly entry alongside the control-plane one.
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
