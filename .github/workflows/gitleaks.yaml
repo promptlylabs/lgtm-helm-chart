@@ -1,4 +1,5 @@
-# Implementation details: https://github.com/promptlylabs/shared-workflows/blob/main/.github/workflows/gitleaks.yml
+# Inlined from promptlylabs/shared-workflows gitleaks.yml: that reusable
+# workflow lives in a private repo, which public repos cannot call.
 name: Gitleaks Secret Detection
 
 on:
@@ -7,6 +8,21 @@ on:
 
 jobs:
   gitleaks:
-    uses: promptlylabs/shared-workflows/.github/workflows/gitleaks.yml@main
-    secrets:
-      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_ENABLE_COMMENTS: false
