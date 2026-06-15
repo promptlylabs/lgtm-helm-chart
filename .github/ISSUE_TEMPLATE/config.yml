@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Usage documentation
+    url: https://github.com/promptlylabs/lgtm-helm-chart/blob/main/charts/lgtm/README.md
+    about: How to install and configure the chart. Please check the docs before filing an issue.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/promptlylabs/lgtm-helm-chart/security/advisories/new
+    about: Do not open a public issue for security problems — report privately here.

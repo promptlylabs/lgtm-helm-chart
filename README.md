@@ -27,6 +27,10 @@ Chart defaults are maintained as per-component fragments in [`charts/lgtm/values
 
 Dependencies are managed by [Renovate](renovate.json5) ([ADR-0008](docs/adrs/0008-automated-dependency-updates-renovate.md)): non-major updates arrive as one grouped weekly PR that bumps the chart version and automerges once the `lint` and `smoke` checks pass; upstream majors arrive as separate `major-upstream` PRs that need a human to adapt `values.d/` if necessary and decide whether the chart's own values contract broke (only then is the chart version manually bumped to a new major). The kind-based [smoke test](.github/workflows/smoke.yaml) installs the full stack and asserts traces, metrics, logs and Grafana provisioning end to end on every PR.
 
+## Contributing & community
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the local workflow and CI gates, and report bugs or request features through the [issue templates](.github/ISSUE_TEMPLATE/). Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). To report a security vulnerability, follow the [Security Policy](SECURITY.md) rather than opening a public issue.
+
 ## License
 
 [Apache-2.0](LICENSE)

@@ -1,0 +1,103 @@
+name: Bug report
+description: Report a problem with the lgtm chart — rendering, install, or runtime behaviour.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The more you fill in, the faster we can reproduce it.
+        For security vulnerabilities, **do not** use this form — see the [Security Policy](https://github.com/promptlylabs/lgtm-helm-chart/security/policy).
+  - type: input
+    id: chart-version
+    attributes:
+      label: Chart version
+      description: The `lgtm` chart version (`helm list` or `Chart.yaml` `version`).
+      placeholder: e.g. 0.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How is the chart installed?
+      options:
+        - helm install
+        - helm upgrade
+        - Argo CD
+        - Flux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes version
+      description: Server version from `kubectl version`.
+      placeholder: e.g. v1.30.2
+    validations:
+      required: true
+  - type: dropdown
+    id: distro
+    attributes:
+      label: Kubernetes distribution / platform
+      options:
+        - kind
+        - EKS (AWS)
+        - GKE (GCP)
+        - AKS (Azure)
+        - Talos
+        - k3s
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: components
+    attributes:
+      label: Affected components
+      description: Which part(s) of the stack are involved?
+      options:
+        - label: Loki (logs)
+        - label: Grafana
+        - label: Tempo (traces)
+        - label: Prometheus / kube-prometheus-stack (metrics)
+        - label: Pyroscope (profiling)
+        - label: OpenTelemetry collectors
+        - label: OpenTelemetry Operator
+        - label: Chart packaging / values / datasources / dashboards
+        - label: Not sure
+  - type: textarea
+    id: values
+    attributes:
+      label: Relevant values overrides
+      description: The `values` you set (redact any secrets). Rendered as YAML.
+      render: yaml
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. helm install lgtm promptlylabs/lgtm -n observability --set ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual behaviour
+      description: What did you expect to happen, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Relevant pod logs, `kubectl describe`, events, or `helm template` output. Rendered as a code block.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am running the latest released chart version (or noted why not above).
+          required: true
