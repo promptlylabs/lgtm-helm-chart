@@ -68,3 +68,27 @@ same-namespace short names and are flagged in the values fragments.
 {{- define "lgtm.pyroscope.endpoint" -}}
 {{- .Values.lgtm.endpoints.pyroscope | default (printf "http://%s.%s.svc.%s:4040" (include "lgtm.pyroscope.serviceName" .) .Release.Namespace .Values.lgtm.clusterDomain) -}}
 {{- end -}}
+
+{{/*
+Exporter sending-queue batching — replaces the deprecated batch processor.
+
+Upstream is retiring the batch processor: it acks data before the exporter
+confirms delivery and swallows per-batch errors, which breaks backpressure.
+Batching instead lives in each real exporter's sending queue, where it shares
+the queue's retry and backpressure. sizer:items + min_size/flush_timeout mirror
+the batch processor's old send_batch_size (1024) / timeout (10s); without
+sizer:items, min_size would count requests, not data points. The sending queue
+and retry_on_failure are on by collector default — pinned here for visibility.
+Include once per real exporter (never the debug exporter) at the exporter's
+sub-key indent, e.g. with nindent 8.
+*/}}
+{{- define "lgtm.collector.sendingQueue" -}}
+sending_queue:
+  enabled: true
+  batch:
+    sizer: items
+    min_size: 1024
+    flush_timeout: 10s
+retry_on_failure:
+  enabled: true
+{{- end -}}
