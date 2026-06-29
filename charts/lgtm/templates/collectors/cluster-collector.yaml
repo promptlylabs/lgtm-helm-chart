@@ -103,10 +103,6 @@ spec:
         auth_type: serviceAccount
 
     processors:
-      batch:
-        send_batch_size: 1024
-        timeout: 10s
-
       # Must be first in every pipeline (fail-safe); ~80% of the 512Mi limit
       memory_limiter:
         check_interval: 1s
@@ -143,10 +139,12 @@ spec:
       # Prometheus native OTLP ingestion (HTTP, not gRPC)
       otlp_http/metrics:
         metrics_endpoint: {{ include "lgtm.prometheus.otlpEndpoint" . }}/v1/metrics
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
       # Loki native OTLP ingestion
       otlp_http/loki:
         endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
       debug:
         verbosity: basic
@@ -157,11 +155,11 @@ spec:
       pipelines:
         metrics:
           receivers: [k8s_cluster, prometheus]
-          processors: [memory_limiter, batch, resource]
+          processors: [memory_limiter, resource]
           exporters: [otlp_http/metrics, debug]
         logs:
           receivers: [k8s_events]
-          processors: [memory_limiter, batch, resource/events]
+          processors: [memory_limiter, resource/events]
           exporters: [otlp_http/loki]
 
   resources:

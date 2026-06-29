@@ -219,10 +219,6 @@ spec:
             on_error: send
 
     processors:
-      batch:
-        send_batch_size: 1024
-        timeout: 10s
-
       # Percentage mode tracks the container's cgroup limit, so it auto-scales
       # with limits.memory — no second hardcoded value to keep in sync.
       memory_limiter:
@@ -293,15 +289,18 @@ spec:
       # Prometheus native OTLP ingestion (HTTP, not gRPC)
       otlp_http/metrics:
         metrics_endpoint: {{ include "lgtm.prometheus.otlpEndpoint" . }}/v1/metrics
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
       # Loki native OTLP ingestion
       otlp_http/loki:
         endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
       otlp_grpc/tempo:
         endpoint: {{ include "lgtm.tempo.otlpGrpcEndpoint" . }}
         tls:
           insecure: true
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
       debug:
         verbosity: basic
@@ -312,15 +311,15 @@ spec:
       pipelines:
         metrics:
           receivers: [hostmetrics, prometheus, kubeletstats]
-          processors: [memory_limiter{{- if .Values.collectors.resourceDetection.detectors }}, resourcedetection{{- end }}, batch, resource]
+          processors: [memory_limiter{{- if .Values.collectors.resourceDetection.detectors }}, resourcedetection{{- end }}, resource]
           exporters: [otlp_http/metrics, debug]
         logs:
           receivers: [filelog]
-          processors: [memory_limiter, k8s_attributes, transform/trace_context, resource, batch]
+          processors: [memory_limiter, k8s_attributes, transform/trace_context, resource]
           exporters: [otlp_http/loki]
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, k8s_attributes, resource, batch]
+          processors: [memory_limiter, k8s_attributes, resource]
           exporters: [otlp_grpc/tempo]
 
   env:

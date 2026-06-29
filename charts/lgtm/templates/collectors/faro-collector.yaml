@@ -50,10 +50,6 @@ spec:
         limit_mib: 200
         spike_limit_mib: 64
 
-      batch:
-        send_batch_size: 1024
-        timeout: 10s
-
       # service.name must match the backend's OTEL_SERVICE_NAME for
       # frontend↔backend correlation in Grafana.
       resource:
@@ -73,21 +69,23 @@ spec:
     exporters:
       otlp_http/loki:
         endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
       otlp_grpc/tempo:
         endpoint: {{ include "lgtm.tempo.otlpGrpcEndpoint" . }}
         tls:
           insecure: true
+        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
 
     service:
       pipelines:
         logs:
           receivers: [faro]
-          processors: [memory_limiter, batch, resource]
+          processors: [memory_limiter, resource]
           exporters: [otlp_http/loki]
         traces:
           receivers: [faro]
-          processors: [memory_limiter, batch, resource]
+          processors: [memory_limiter, resource]
           exporters: [otlp_grpc/tempo]
 
   resources:
