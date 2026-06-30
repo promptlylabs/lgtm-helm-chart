@@ -40,6 +40,20 @@ loki:
     limits_config:
       retention_period: 168h
 
+      # OTLP attribute mapping. Loki's built-in default indexes k8s.pod.name and
+      # service.instance.id as stream labels; upstream now flags both as
+      # high-cardinality (every pod restart / instance churn mints a new stream).
+      # Keep the rest of the curated default index set, but demote these two to
+      # structured metadata — still queryable, just not indexed.
+      otlp_config:
+        resource_attributes:
+          ignore_defaults: false
+          attributes_config:
+            - action: structured_metadata
+              attributes:
+                - k8s.pod.name
+                - service.instance.id
+
     compactor:
       retention_enabled: true
       delete_request_store: filesystem
@@ -53,9 +67,9 @@ loki:
     resources:
       requests:
         cpu: 50m
-        memory: 256Mi
+        memory: 192Mi
       limits:
-        memory: 1Gi
+        memory: 512Mi
     persistence:
       enabled: true
       size: 10Gi
@@ -98,6 +112,13 @@ loki:
   lokiCanary:
     enabled: false
 
-  # Scraped by the node collector (no opentelemetry.io/scope label needed).
-  serviceMonitor:
-    enabled: true
+  # Loki's own metrics. The chart exposes this under monitoring.serviceMonitor
+  # (a top-level serviceMonitor key is silently ignored). Labelled
+  # opentelemetry.io/scope: observability so the in-cluster collectors skip it
+  # (the stack does not scrape itself, ADR-0005); reserved for a future
+  # meta-monitoring stack.
+  monitoring:
+    serviceMonitor:
+      enabled: true
+      labels:
+        opentelemetry.io/scope: observability

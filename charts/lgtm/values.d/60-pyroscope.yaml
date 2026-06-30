@@ -16,15 +16,12 @@ pyroscope:
     # Pyroscope profiles its own Go runtime — out-of-the-box profiling data.
     disableSelfProfile: false
 
-    extraArgs:
-      log.level: info
-
     resources:
       requests:
         cpu: 50m
-        memory: 256Mi
+        memory: 192Mi
       limits:
-        memory: 512Mi
+        memory: 384Mi
 
     persistence:
       enabled: true
@@ -41,5 +38,10 @@ pyroscope:
   minio:
     enabled: false
 
+  # Pyroscope scrapes its own /metrics (ingest rate, query latency, ring health)
+  # — the one stack component otherwise unobserved. A scoped exception to the
+  # OTLP-push posture (ADR-0005) for an internal component, mirroring Grafana.
   serviceMonitor:
-    enabled: false
+    enabled: true
+    labels:
+      opentelemetry.io/scope: observability

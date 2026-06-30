@@ -19,9 +19,11 @@ kube-prometheus-stack:
   prometheusOperator:
     enabled: true
 
-    # Right-sized from observed production usage. CPU: requests only (avoid
-    # throttling); memory: requests + limits (prevent OOM) — applies to every
-    # resources block in this chart's defaults.
+    # Defaults are a small starting baseline — sized for a fresh / low-traffic
+    # install, not production load. CPU: requests only (no limits, avoid
+    # throttling); memory: request ≈ baseline, limit ≈ a little headroom. Memory
+    # scales with telemetry volume — raise these as your stack grows. Applies to
+    # every resources block in this chart's defaults.
     resources:
       requests:
         cpu: 25m
@@ -69,10 +71,10 @@ kube-prometheus-stack:
 
       resources:
         requests:
-          cpu: 100m
-          memory: 512Mi
+          cpu: 50m
+          memory: 256Mi
         limits:
-          memory: 1Gi
+          memory: 512Mi
 
       # Retention
       retention: "7d"
@@ -98,12 +100,17 @@ kube-prometheus-stack:
       enableRemoteWriteReceiver: true
 
       # CRITICAL: the otlp block must be explicitly set — when completely
-      # unset, defaults are not computed properly and OTLP metrics are
-      # silently rejected. https://github.com/prometheus/prometheus/issues/16688
+      # unset, defaults are not computed properly and OTLP metrics are silently
+      # rejected (re-verified still required as of Prometheus 3.11.x).
+      # https://github.com/prometheus/prometheus/issues/16688
       otlp:
         # Preserve OTel metric names 1:1 (system.cpu.time stays dotted).
         # PromQL: quote the names — {"system.cpu.time"}.
         translationStrategy: NoTranslation
+        # Keep service.name/.namespace/.instance.id as labels even if the
+        # promoteResourceAttributes list below is later trimmed (they also build
+        # the job/instance labels).
+        keepIdentifyingResourceAttributes: true
         # Promote OTel resource attributes to queryable labels.
         # https://prometheus.io/docs/guides/opentelemetry/
         promoteResourceAttributes:

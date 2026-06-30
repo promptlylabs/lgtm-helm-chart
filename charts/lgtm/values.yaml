@@ -83,10 +83,10 @@ collectors:
     enabled: true
     resources:
       limits:
-        memory: 768Mi
+        memory: 512Mi
       requests:
         cpu: 50m
-        memory: 384Mi
+        memory: 256Mi
     # DaemonSet must also cover tainted system/critical-addons node pools.
     tolerations:
       - key: CriticalAddonsOnly
@@ -97,10 +97,10 @@ collectors:
     enabled: true
     resources:
       limits:
-        memory: 512Mi
+        memory: 384Mi
       requests:
         cpu: 50m
-        memory: 256Mi
+        memory: 192Mi
 
   faro:
     enabled: false
@@ -144,9 +144,11 @@ kube-prometheus-stack:
   prometheusOperator:
     enabled: true
 
-    # Right-sized from observed production usage. CPU: requests only (avoid
-    # throttling); memory: requests + limits (prevent OOM) — applies to every
-    # resources block in this chart's defaults.
+    # Defaults are a small starting baseline — sized for a fresh / low-traffic
+    # install, not production load. CPU: requests only (no limits, avoid
+    # throttling); memory: request ≈ baseline, limit ≈ a little headroom. Memory
+    # scales with telemetry volume — raise these as your stack grows. Applies to
+    # every resources block in this chart's defaults.
     resources:
       requests:
         cpu: 25m
@@ -194,10 +196,10 @@ kube-prometheus-stack:
 
       resources:
         requests:
-          cpu: 100m
-          memory: 512Mi
+          cpu: 50m
+          memory: 256Mi
         limits:
-          memory: 1Gi
+          memory: 512Mi
 
       # Retention
       retention: "7d"
@@ -223,12 +225,17 @@ kube-prometheus-stack:
       enableRemoteWriteReceiver: true
 
       # CRITICAL: the otlp block must be explicitly set — when completely
-      # unset, defaults are not computed properly and OTLP metrics are
-      # silently rejected. https://github.com/prometheus/prometheus/issues/16688
+      # unset, defaults are not computed properly and OTLP metrics are silently
+      # rejected (re-verified still required as of Prometheus 3.11.x).
+      # https://github.com/prometheus/prometheus/issues/16688
       otlp:
         # Preserve OTel metric names 1:1 (system.cpu.time stays dotted).
         # PromQL: quote the names — {"system.cpu.time"}.
         translationStrategy: NoTranslation
+        # Keep service.name/.namespace/.instance.id as labels even if the
+        # promoteResourceAttributes list below is later trimmed (they also build
+        # the job/instance labels).
+        keepIdentifyingResourceAttributes: true
         # Promote OTel resource attributes to queryable labels.
         # https://prometheus.io/docs/guides/opentelemetry/
         promoteResourceAttributes:
@@ -443,6 +450,20 @@ loki:
     limits_config:
       retention_period: 168h
 
+      # OTLP attribute mapping. Loki's built-in default indexes k8s.pod.name and
+      # service.instance.id as stream labels; upstream now flags both as
+      # high-cardinality (every pod restart / instance churn mints a new stream).
+      # Keep the rest of the curated default index set, but demote these two to
+      # structured metadata — still queryable, just not indexed.
+      otlp_config:
+        resource_attributes:
+          ignore_defaults: false
+          attributes_config:
+            - action: structured_metadata
+              attributes:
+                - k8s.pod.name
+                - service.instance.id
+
     compactor:
       retention_enabled: true
       delete_request_store: filesystem
@@ -456,9 +477,9 @@ loki:
     resources:
       requests:
         cpu: 50m
-        memory: 256Mi
+        memory: 192Mi
       limits:
-        memory: 1Gi
+        memory: 512Mi
     persistence:
       enabled: true
       size: 10Gi
@@ -501,9 +522,16 @@ loki:
   lokiCanary:
     enabled: false
 
-  # Scraped by the node collector (no opentelemetry.io/scope label needed).
-  serviceMonitor:
-    enabled: true
+  # Loki's own metrics. The chart exposes this under monitoring.serviceMonitor
+  # (a top-level serviceMonitor key is silently ignored). Labelled
+  # opentelemetry.io/scope: observability so the in-cluster collectors skip it
+  # (the stack does not scrape itself, ADR-0005); reserved for a future
+  # meta-monitoring stack.
+  monitoring:
+    serviceMonitor:
+      enabled: true
+      labels:
+        opentelemetry.io/scope: observability
 
 # ═══ 50-tempo.yaml ═══════════════════════════════════════════════
 
@@ -525,14 +553,15 @@ tempo:
     # chart default (1024MB) just wastes memory and contributes to OOMKills.
     memBallastSizeMbs: 0
 
-    # 2Gi limit learned from production OOMKills — the metrics generator,
-    # compactor and ingester together need the headroom.
+    # Starting baseline. Tempo memory scales with trace volume — the
+    # metrics-generator, compactor and ingester together can need far more under
+    # load (production has needed 2Gi+); raise as you grow.
     resources:
       requests:
         cpu: 50m
-        memory: 1Gi
+        memory: 256Mi
       limits:
-        memory: 2Gi
+        memory: 512Mi
 
     multitenancyEnabled: false
 
@@ -540,10 +569,6 @@ tempo:
 
     metricsGenerator:
       enabled: true
-      # Same-namespace short name (Helm cannot template sub-chart values).
-      # Must be updated if kube-prometheus-stack.fullnameOverride changes or
-      # Prometheus lives outside this release.
-      remoteWriteUrl: "http://prom-stack-prometheus:9090/api/v1/write"
       processor:
         # TraceQL metrics queries (rate/count/histogram) used by Traces Drilldown.
         local_blocks:
@@ -584,6 +609,11 @@ tempo:
                     value: SPAN_KIND_INTERNAL
       storage:
         path: /var/tempo/metrics
+        # Same-namespace short name (Helm cannot template sub-chart values).
+        # Must be updated if kube-prometheus-stack.fullnameOverride changes or
+        # Prometheus lives outside this release. This explicit remote_write is
+        # the metrics-generator's only sink — it supersedes the chart's
+        # remoteWriteUrl fallback, which we therefore omit.
         remote_write:
           - url: "http://prom-stack-prometheus:9090/api/v1/write"
             send_exemplars: true
@@ -598,6 +628,13 @@ tempo:
             - service-graphs
             - span-metrics
             - local-blocks
+          # Emit RED metrics as BOTH classic and native histograms. Native
+          # gives higher resolution at lower cardinality; classic
+          # _bucket/_sum/_count are still required by Grafana's built-in Service
+          # Graph view, which derives edge response-time from
+          # traces_service_graph_request_*_seconds_sum (native-only leaves it
+          # blank). Single global toggle — span-metrics and service-graphs alike.
+          generate_native_histograms: both
 
     storage:
       trace:
@@ -612,9 +649,14 @@ tempo:
     enabled: true
     size: 15Gi
 
-  # Scraped by the node collector (no opentelemetry.io/scope label needed).
+  # Part of the observability stack — labelled opentelemetry.io/scope:
+  # observability so the in-cluster collectors deliberately skip it (the stack
+  # does not scrape itself, ADR-0005); reserved for a future meta-monitoring
+  # stack that selects this scope.
   serviceMonitor:
     enabled: true
+    additionalLabels:
+      opentelemetry.io/scope: observability
 
   service:
     type: ClusterIP
@@ -639,15 +681,12 @@ pyroscope:
     # Pyroscope profiles its own Go runtime — out-of-the-box profiling data.
     disableSelfProfile: false
 
-    extraArgs:
-      log.level: info
-
     resources:
       requests:
         cpu: 50m
-        memory: 256Mi
+        memory: 192Mi
       limits:
-        memory: 512Mi
+        memory: 384Mi
 
     persistence:
       enabled: true
@@ -664,8 +703,13 @@ pyroscope:
   minio:
     enabled: false
 
+  # Pyroscope scrapes its own /metrics (ingest rate, query latency, ring health)
+  # — the one stack component otherwise unobserved. A scoped exception to the
+  # OTLP-push posture (ADR-0005) for an internal component, mirroring Grafana.
   serviceMonitor:
-    enabled: false
+    enabled: true
+    labels:
+      opentelemetry.io/scope: observability
 
 # ═══ 70-opentelemetry-operator.yaml ══════════════════════════════
 
