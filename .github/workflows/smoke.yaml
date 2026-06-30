@@ -194,10 +194,14 @@ jobs:
           kubectl -n observability port-forward svc/otel-node-collector-collector 14318:4318 >/dev/null 2>&1 &
           sleep 3
           NOW=$(date +%s)000000000
+          START=$(( $(date +%s) - 1 ))000000000
+          # kind:2 (SERVER) + http.method so the metrics-generator produces
+          # span-metrics — SPAN_KIND_INTERNAL is excluded by our filter_policies.
           curl -fsS -X POST localhost:14318/v1/traces -H 'Content-Type: application/json' -d "{
             \"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"smoke-test\"}}]},
             \"scopeSpans\":[{\"spans\":[{\"traceId\":\"5b8efff798038103d269b633813fc60c\",\"spanId\":\"eee19b7ec3c1b174\",
-            \"name\":\"smoke-span\",\"kind\":1,\"startTimeUnixNano\":\"$NOW\",\"endTimeUnixNano\":\"$NOW\"}]}]}]}" \
+            \"name\":\"smoke-span\",\"kind\":2,\"startTimeUnixNano\":\"$START\",\"endTimeUnixNano\":\"$NOW\",
+            \"attributes\":[{\"key\":\"http.method\",\"value\":{\"stringValue\":\"GET\"}}]}]}]}]}" \
             || fail "node collector rejected the OTLP test span"
 
           kubectl -n observability port-forward svc/tempo 13200:3200 >/dev/null 2>&1 &
@@ -223,6 +227,22 @@ jobs:
           done
           [ "$found" -eq 1 ] || fail "no OTel host metrics arrived in Prometheus"
           echo "metrics OK ($n series)"
+
+          # ── span-metrics: Tempo metrics-generator → Prometheus ────────────
+          # The SERVER test span above flows through Tempo's metrics-generator,
+          # which remote-writes RED metrics. Asserts that path works end to end
+          # (series-existence, not a rate() query: a single span keeps the
+          # counter flat, so a rate would be ~0/NaN even though it is present).
+          found=0
+          for i in $(seq 1 36); do
+            n=$(curl -fsS -G 'localhost:19090/api/v1/series' \
+              --data-urlencode 'match[]=traces_spanmetrics_calls_total' \
+              | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))' || echo 0)
+            if [ "$n" -gt 0 ]; then found=1; break; fi
+            sleep 5
+          done
+          [ "$found" -eq 1 ] || fail "no Tempo span-metrics in Prometheus"
+          echo "span-metrics OK"
 
           # ── logs: filelog → Loki OTLP at :3100 (no gateway) ───────────────
           kubectl -n observability port-forward svc/loki 13100:3100 >/dev/null 2>&1 &

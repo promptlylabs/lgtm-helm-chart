@@ -21,6 +21,9 @@ jobs:
       - name: Check generated values.yaml is in sync with values.d/
         run: make check-values
 
+      - name: Validate Grafana dashboards (JSON + datasource refs)
+        run: make validate-dashboards
+
       # Adds the helm repos and vendors dependencies — must run before
       # `ct lint`, whose internal `helm dependency build` needs the repos.
       - name: Build chart dependencies

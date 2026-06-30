@@ -184,5 +184,8 @@ data:
         access: proxy
         editable: false
         isDefault: false
+        jsonData:
+          # Minimum step for time-series profiling queries (matches the default).
+          minStep: "15s"
       {{- end }}
 {{- end }}
