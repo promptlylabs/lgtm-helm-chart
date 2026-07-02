@@ -1,0 +1,18 @@
+# Meta-monitoring reservation.
+#
+# Use this once a SEPARATE meta-monitoring stack is deployed to watch the
+# observability stack itself. It selects the ServiceMonitors labelled
+# `opentelemetry.io/scope: observability` (Grafana, Prometheus, the Prometheus
+# operator, Loki, Tempo, Pyroscope).
+#
+# With this enabled, the in-cluster collectors stop scraping those targets and
+# leave them for the meta stack — avoiding double collection. The default
+# (metaMonitoring.enabled: false) has the in-cluster collectors scrape the
+# observability stack too, which is the right choice until a meta stack exists.
+#
+# The `scope: observability` label is applied either way, so switching between
+# the two modes is just this flag — no re-labelling.
+
+lgtm:
+  metaMonitoring:
+    enabled: true

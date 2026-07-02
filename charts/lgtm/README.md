@@ -72,6 +72,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `lgtm.dashboards.enabled` | `true` | Provision the shipped dashboards |
 | `lgtm.dashboards.folder` | `Platform` | Grafana folder for the shipped dashboards |
 | `lgtm.dashboards.exclude` | `[]` | Skip dashboards by basename (e.g. `[otel-karpenter-nap]`) |
+| `lgtm.metaMonitoring.enabled` | `false` | Reserve the observability stack's own `scope: observability` ServiceMonitors for a separate meta-monitoring stack; default `false` scrapes them in-cluster |
 | `collectors.enabled` | `true` | Master switch for all collector CRs |
 | `collectors.image` | `""` | Override the collector image (node + cluster) |
 | `collectors.priorityClassName` | `""` | PriorityClass for collector pods (must exist) |
@@ -83,7 +84,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 ### Shipping your own telemetry and dashboards
 
 - **Apps** send OTLP to `otel-node-collector-collector.<namespace>.svc:4317` (gRPC) or `:4318` (HTTP). The operator service routes to the same-node collector pod.
-- **ServiceMonitors/PodMonitors** are scraped automatically, from any namespace, with no labels needed. Label `opentelemetry.io/scope: cluster` routes a monitor to the cluster collector instead.
+- **ServiceMonitors/PodMonitors** are scraped automatically, from any namespace, with no labels needed. Label `opentelemetry.io/scope: cluster` routes a monitor to the cluster collector instead. Label `opentelemetry.io/scope: observability` marks the observability stack's own monitors — by default they're scraped in-cluster like everything else; set `lgtm.metaMonitoring.enabled=true` to reserve them for a separate meta-monitoring stack (see [`examples/values-meta-monitoring.yaml`](examples/values-meta-monitoring.yaml)).
 - **Dashboards**: any ConfigMap labelled `grafana_dashboard: "1"` in any namespace (folder via the `grafana_folder` annotation). Datasources and Grafana alert rules work the same with `grafana_datasource` / `grafana_alert`.
 - **PromQL**: OTel metric names are preserved 1:1 — quote dotted names, e.g. `{"k8s.pod.cpu.usage"}`.
 

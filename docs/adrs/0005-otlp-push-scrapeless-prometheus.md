@@ -4,7 +4,7 @@ type: adr
 title: OTLP-push telemetry with a scrape-less, storage-only Prometheus
 status: accepted
 created: 2026-06-12
-updated: 2026-06-30
+updated: 2026-07-02
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -50,23 +50,40 @@ We keep the reference telemetry architecture as the chart's defaults:
 
 High — this is a transcription of a production-validated setup, not a new design. The main external risk is Prometheus changing its experimental OTLP/NoTranslation surface; pin bumps go through review (ADR-0006).
 
-## Addendum (2026-06-30) — the `opentelemetry.io/scope` label and meta-monitoring
+## Addendum (2026-06-30, updated 2026-07-02) — the `opentelemetry.io/scope` label and meta-monitoring
 
 ServiceMonitors/PodMonitors carry an `opentelemetry.io/scope` label that decides which collector
 scrapes them — a three-way convention:
 
-- **unlabelled** → the **node collector** scrapes it (application workloads; its target-allocator
-  selector is `opentelemetry.io/scope DoesNotExist`).
+- **unlabelled** → the **node collector** scrapes it (application workloads).
 - **`scope: cluster`** → the **cluster collector** scrapes it (control-plane: apiserver, CoreDNS).
-- **`scope: observability`** → scraped by **neither in-cluster collector**, by design. The
-  observability stack scrapes everything in the cluster **except itself**. These targets are
-  reserved for a future **meta-monitoring stack**, which would select `scope: observability` to
-  scrape exactly the observability components (and which the observability stack can itself scrape
-  in turn — a meta stack carries no such label). Until that stack exists, the observability
-  components' own `/metrics` are intentionally not collected.
+- **`scope: observability`** → the observability stack's own monitors (Grafana, Prometheus, the
+  Prometheus operator, Loki, Tempo, Pyroscope). Whether the in-cluster collectors scrape these is
+  controlled by `lgtm.metaMonitoring.enabled` (see below).
 
-All bundled observability components (Grafana, Prometheus, the Prometheus operator, Loki, Tempo,
-Pyroscope) therefore carry `scope: observability` on their ServiceMonitors. Chart 0.1.6 fixed two
-stragglers that broke this invariant: Tempo was unlabelled (so the node collector was self-scraping
-it), and Loki's ServiceMonitor was configured under the wrong key — a top-level `serviceMonitor`
-instead of the chart's `monitoring.serviceMonitor` — so it was never created at all.
+All bundled observability components therefore carry `scope: observability` on their
+ServiceMonitors. Chart 0.1.6 fixed two stragglers that broke this invariant: Tempo was unlabelled
+(so the node collector was self-scraping it), and Loki's ServiceMonitor was configured under the
+wrong key — a top-level `serviceMonitor` instead of the chart's `monitoring.serviceMonitor` — so
+it was never created at all.
+
+### `lgtm.metaMonitoring.enabled` (added 2026-07-02)
+
+The `scope: observability` label always identifies the stack's own monitors, but whether the
+in-cluster collectors scrape them is a deployment choice — most installs, especially small
+single-cluster ones, never run a separate meta stack, and reserving those targets for a stack that
+doesn't exist means the observability components' own `/metrics` go uncollected. So the node
+collector's target-allocator selector is keyed on `lgtm.metaMonitoring.enabled`:
+
+- **`false` (default)** → `opentelemetry.io/scope NotIn [cluster]`. `NotIn` also matches monitors
+  that lack the label, so the node collector picks up application **and** `scope: observability`
+  targets — the stack self-monitors — while `scope: cluster` still routes to the cluster collector.
+- **`true`** → `opentelemetry.io/scope DoesNotExist`. The node collector scrapes only unlabelled
+  application monitors; `scope: observability` targets are reserved for a **separate
+  meta-monitoring stack** (not deployed by this chart), which would select `scope: observability`
+  to scrape exactly the observability components (and which the observability stack can itself
+  scrape in turn — a meta stack carries no such label).
+
+Because the label is applied either way, moving between the two modes is just this flag — no
+re-labelling. This changed the default from the original addendum, where `scope: observability`
+was scraped by neither in-cluster collector.
