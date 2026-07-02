@@ -3,8 +3,9 @@ Node collector — DaemonSet, one pod per node (ADR-0005):
   receives  OTLP from application pods (operator service has
             internalTrafficPolicy: Local — apps hit their node's collector)
   collects  host metrics, kubelet/cAdvisor stats, container logs
-  scrapes   ServiceMonitors/PodMonitors WITHOUT an opentelemetry.io/scope
-            label, per-node, via the target allocator
+  scrapes   ServiceMonitors/PodMonitors per-node via the target allocator —
+            unlabelled (app) plus scope=observability by default, or only
+            unlabelled when lgtm.metaMonitoring.enabled (see selector below)
   exports   metrics → Prometheus OTLP, logs → Loki OTLP, traces → Tempo gRPC
 */ -}}
 {{- if and .Values.collectors.enabled .Values.collectors.node.enabled }}
@@ -37,20 +38,19 @@ spec:
   targetAllocator:
     enabled: true
     allocationStrategy: per-node
-    # Negative selector: scrape everything EXCEPT labelled scopes —
-    # application ServiceMonitors need no labels at all.
-    #   scope=cluster:       K8s components → cluster collector
-    #   scope=observability: the stack itself → meta-monitoring (future)
+    # Scope selector (ADR-0005), keyed on lgtm.metaMonitoring.enabled:
+    #   default (no meta stack): NotIn [cluster] — scrape apps AND the
+    #     observability stack (scope=observability); scope=cluster → cluster collector.
+    #   meta stack enabled:      DoesNotExist — scrape only unlabelled apps;
+    #     scope=observability is reserved for the external meta stack.
     prometheusCR:
       enabled: true
       serviceMonitorSelector:
         matchExpressions:
-          - key: opentelemetry.io/scope
-            operator: DoesNotExist
+          {{- include "lgtm.node.scopeMatchExpressions" . | nindent 10 }}
       podMonitorSelector:
         matchExpressions:
-          - key: opentelemetry.io/scope
-            operator: DoesNotExist
+          {{- include "lgtm.node.scopeMatchExpressions" . | nindent 10 }}
     resources:
       limits:
         memory: 64Mi

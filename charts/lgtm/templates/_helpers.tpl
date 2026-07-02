@@ -92,3 +92,30 @@ sending_queue:
 retry_on_failure:
   enabled: true
 {{- end -}}
+
+{{/*
+Node collector target-allocator scope selector (ADR-0005).
+
+Selects which ServiceMonitors/PodMonitors the node collector scrapes, keyed on
+lgtm.metaMonitoring.enabled:
+
+  enabled (meta stack present) → DoesNotExist: scrape only unlabelled (app)
+    monitors. scope=observability is left for the external meta stack;
+    scope=cluster is the cluster collector's.
+  disabled (default, no meta stack) → NotIn [cluster]: scrape everything except
+    cluster-scoped monitors. NotIn also matches monitors that lack the label, so
+    app AND scope=observability targets are both picked up — the stack
+    self-monitors. scope=cluster still routes to the cluster collector.
+
+Include under a matchExpressions: key, e.g. with nindent 10.
+*/}}
+{{- define "lgtm.node.scopeMatchExpressions" -}}
+{{- if .Values.lgtm.metaMonitoring.enabled -}}
+- key: opentelemetry.io/scope
+  operator: DoesNotExist
+{{- else -}}
+- key: opentelemetry.io/scope
+  operator: NotIn
+  values: [cluster]
+{{- end -}}
+{{- end -}}

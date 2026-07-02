@@ -35,3 +35,15 @@ lgtm:
     folder: Platform
     # Dashboards to skip, by file basename (e.g. [otel-karpenter-nap]).
     exclude: []
+
+  # Meta-monitoring reservation (ADR-0005). The observability components carry
+  # `opentelemetry.io/scope: observability` on their ServiceMonitors regardless
+  # of this setting — it only controls whether the in-cluster collectors scrape
+  # those targets.
+  #   false (default): no separate meta-monitoring stack, so the node collector
+  #     scrapes the observability stack too (it self-monitors).
+  #   true: reserve the scope=observability targets for a SEPARATE
+  #     meta-monitoring stack (not deployed by this chart); the in-cluster
+  #     collectors skip them. Flip this on once that meta stack exists.
+  metaMonitoring:
+    enabled: false
