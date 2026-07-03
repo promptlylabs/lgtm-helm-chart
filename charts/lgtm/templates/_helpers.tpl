@@ -119,3 +119,48 @@ Include under a matchExpressions: key, e.g. with nindent 10.
   values: [cluster]
 {{- end -}}
 {{- end -}}
+
+{{/*
+Thanos helpers (ADR-0010). The umbrella-owned Query/Store Gateway/Compactor use
+fixed names (one release per cluster, ADR-0001/0002), so the endpoints below are
+plain service DNS names, not release-prefixed.
+*/}}
+
+{{/* Fully-qualified image reference for the umbrella-owned Thanos components. */}}
+{{- define "lgtm.thanos.image" -}}
+{{- $img := .Values.thanos.image -}}
+{{- if $img.registry -}}
+{{- printf "%s/%s:%s" $img.registry $img.repository $img.tag -}}
+{{- else -}}
+{{- printf "%s:%s" $img.repository $img.tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Thanos Query HTTP (Prometheus-API) endpoint. */}}
+{{- define "lgtm.thanos.queryEndpoint" -}}
+{{- printf "http://thanos-query.%s.svc.%s:9090" .Release.Namespace .Values.lgtm.clusterDomain -}}
+{{- end -}}
+
+{{/*
+StoreAPI of the Prometheus Thanos sidecar, federated by Query. Defaults to a DNS
+SRV lookup of the headless Service that kube-prometheus-stack's thanosService
+creates ("<fullnameOverride>-thanos-discovery", gRPC port name "grpc").
+*/}}
+{{- define "lgtm.thanos.sidecarStoreEndpoint" -}}
+{{- $prom := index .Values "kube-prometheus-stack" "fullnameOverride" | default (printf "%s-kube-prometheus-stack" .Release.Name) -}}
+{{- .Values.thanos.sidecarStoreEndpoint | default (printf "dnssrv+_grpc._tcp.%s-thanos-discovery.%s.svc.%s" $prom .Release.Namespace .Values.lgtm.clusterDomain) -}}
+{{- end -}}
+
+{{/*
+Read endpoint for Grafana's Prometheus datasource: Thanos Query when the query
+stack is enabled (and no explicit lgtm.endpoints.prometheus override), otherwise
+the in-cluster Prometheus. Write paths (OTLP ingest, Tempo remote-write) keep
+targeting Prometheus directly — Query is read-only.
+*/}}
+{{- define "lgtm.metrics.readEndpoint" -}}
+{{- if and .Values.thanos.enabled .Values.thanos.query.enabled (not .Values.lgtm.endpoints.prometheus) -}}
+{{- include "lgtm.thanos.queryEndpoint" . -}}
+{{- else -}}
+{{- include "lgtm.prometheus.endpoint" . -}}
+{{- end -}}
+{{- end -}}

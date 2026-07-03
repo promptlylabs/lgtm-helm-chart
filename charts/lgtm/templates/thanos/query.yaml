@@ -1,0 +1,89 @@
+{{- /*
+Thanos Query (ADR-0010) — a Prometheus-API-compatible endpoint that fans out to
+the Prometheus sidecar (recent, in-Prometheus data) and the Store Gateway
+(historical, in-bucket data) StoreAPIs and deduplicates. Grafana's Prometheus
+datasource is repointed here automatically when the stack is enabled
+(templates/grafana/datasources.yaml). Read-only — ingestion keeps hitting
+Prometheus directly.
+*/ -}}
+{{- if and .Values.thanos.enabled .Values.thanos.query.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thanos-query
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: thanos-query
+    app.kubernetes.io/component: query
+    {{- include "lgtm.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.thanos.query.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thanos-query
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thanos-query
+        app.kubernetes.io/component: query
+        {{- include "lgtm.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: thanos-query
+          image: {{ include "lgtm.thanos.image" . }}
+          imagePullPolicy: {{ .Values.thanos.image.pullPolicy }}
+          args:
+            - query
+            - --log.level=info
+            - --http-address=0.0.0.0:9090
+            - --grpc-address=0.0.0.0:10901
+            # Dedup across HA Prometheus replicas (operator sets prometheus_replica).
+            - --query.replica-label=prometheus_replica
+            # Sidecar StoreAPI (recent data still in Prometheus).
+            - --endpoint={{ include "lgtm.thanos.sidecarStoreEndpoint" . }}
+            {{- if .Values.thanos.storeGateway.enabled }}
+            # Store Gateway StoreAPI (historical data in object storage).
+            - --endpoint=dnssrv+_grpc._tcp.thanos-store-gateway.{{ .Release.Namespace }}.svc.{{ .Values.lgtm.clusterDomain }}
+            {{- end }}
+            {{- range .Values.thanos.query.extraStores }}
+            - --endpoint={{ . }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 9090
+            - name: grpc
+              containerPort: 10901
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+          resources:
+            {{- toYaml .Values.thanos.query.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thanos-query
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: thanos-query
+    app.kubernetes.io/component: query
+    {{- include "lgtm.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: thanos-query
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+    - name: grpc
+      port: 10901
+      targetPort: grpc
+{{- end }}

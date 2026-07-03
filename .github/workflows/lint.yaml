@@ -62,6 +62,20 @@ jobs:
             helm template lgtm charts/lgtm/ --namespace observability -f "$f" > /dev/null
           done
 
+      # Assert the Thanos overlay actually wires the sidecar + query stack (the
+      # sidecar container is injected by the operator at runtime, so we assert the
+      # rendered CR fields, the gRPC Service, and the umbrella workloads).
+      - name: Helm template (Thanos enabled — assert wiring)
+        run: |
+          out=$(helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-thanos.yaml)
+          echo "$out" | grep -q 'objectStorageConfig'   || { echo "missing objectStorageConfig"; exit 1; }
+          echo "$out" | grep -q 'disableCompaction: true' || { echo "missing disableCompaction"; exit 1; }
+          echo "$out" | grep -q 'port: 10901'            || { echo "missing sidecar gRPC 10901"; exit 1; }
+          for n in thanos-query thanos-store-gateway thanos-compactor; do
+            echo "$out" | grep -q "name: $n" || { echo "missing workload $n"; exit 1; }
+          done
+          echo "Thanos enabled-path wiring OK"
+
       - name: Set up kubeconform
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
         env:

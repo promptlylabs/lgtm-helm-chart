@@ -1,0 +1,99 @@
+# Long-term metrics via a Thanos sidecar + query stack (ADR-0010).
+#
+#   - The Prometheus Operator injects a Thanos sidecar that uploads completed 2h
+#     TSDB blocks to S3-compatible object storage (Cloudflare R2, AWS S3, MinIO …).
+#   - Thanos Query / Store Gateway / Compactor (owned by this chart) make those
+#     blocks queryable beyond local Prometheus retention; Grafana's Prometheus
+#     datasource is repointed to Query automatically.
+#
+# Object-storage credentials come from an EXISTING Secret (never templated here) —
+# create it with External Secrets Operator. Replace every <placeholder>.
+#
+# ── The Secret the consumer must provide ────────────────────────────────────
+# A Secret named `thanos-objstore` with one key `objstore.yml` holding a Thanos
+# object-store config. Example ExternalSecret (external-secrets.io/v1):
+#
+#   apiVersion: external-secrets.io/v1
+#   kind: ExternalSecret
+#   metadata:
+#     name: thanos-objstore
+#     namespace: observability
+#   spec:
+#     refreshInterval: 1h
+#     secretStoreRef:
+#       name: <your-store>
+#       kind: ClusterSecretStore
+#     target:
+#       name: thanos-objstore              # <- referenced below (objstore.existingSecret)
+#       template:
+#         engineVersion: v2
+#         data:
+#           objstore.yml: |                # <- referenced below (objstore.existingSecretKey)
+#             type: S3
+#             config:
+#               bucket: <bucket>
+#               endpoint: <host-only-endpoint>
+#               region: <region>
+#               access_key: "{{ .accessKeyId }}"
+#               secret_key: "{{ .secretAccessKey }}"
+#               insecure: false
+#               signature_version2: false
+#               bucket_lookup_type: auto
+#     data:
+#       - secretKey: accessKeyId
+#         remoteRef: { key: <path/to/secret>, property: access-key-id }
+#       - secretKey: secretAccessKey
+#         remoteRef: { key: <path/to/secret>, property: secret-access-key }
+#
+# ── objstore.yml per backend ────────────────────────────────────────────────
+#   `endpoint` is the host ONLY — no https:// scheme, no bucket in it (the bucket
+#   is the `bucket:` field). `bucket_lookup_type: auto` resolves to path-style for
+#   non-AWS/GCS endpoints. `signature_version2` stays false (S3 SigV4).
+#
+#   Cloudflare R2:  endpoint: <account-id>.r2.cloudflarestorage.com
+#                   # EU jurisdiction bucket: <account-id>.eu.r2.cloudflarestorage.com
+#                   region: auto
+#   AWS S3:         endpoint: s3.<region>.amazonaws.com
+#                   region: <region>
+#   MinIO (in-cluster, plaintext): endpoint: minio.<namespace>.svc:9000
+#                   region: ""   ·   insecure: true
+#
+# ── Retention note ──────────────────────────────────────────────────────────
+#   Local Prometheus retention is now a rolling cache in front of the bucket. Keep
+#   it >= a few hours so blocks upload before eviction — the chart default (7d) is
+#   fine, and lowering to 24h is safe. With compaction disabled a too-tight
+#   `retentionSize` can evict a 2h block BEFORE the sidecar uploads it, leaving a
+#   permanent gap in the bucket: prefer time-based `retention` and keep any size
+#   cap generous (or unset it).
+
+kube-prometheus-stack:
+  prometheus:
+    # Headless Service exposing the sidecar StoreAPI (gRPC 10901) so Thanos Query
+    # can federate it with the Store Gateway.
+    thanosService:
+      enabled: true
+
+    prometheusSpec:
+      # Sidecar → object storage. Credentials live in the referenced Secret's
+      # objstore.yml (above), never in values.
+      thanos:
+        # renovate: datasource=docker depName=quay.io/thanos/thanos
+        image: quay.io/thanos/thanos:v0.41.0
+        objectStorageConfig:
+          existingSecret:
+            name: thanos-objstore
+            key: objstore.yml
+
+      # The operator already disables local compaction whenever objectStorageConfig
+      # is set (so 2h blocks upload before compaction) — set explicitly for clarity.
+      disableCompaction: true
+
+      # See the retention note above. Chart default is 7d; 24h is a safe floor.
+      # retention: "24h"
+
+# Umbrella-owned query stack (Query / Store Gateway / Compactor). Reuses the same
+# objstore Secret as the sidecar.
+thanos:
+  enabled: true
+  objstore:
+    existingSecret: thanos-objstore
