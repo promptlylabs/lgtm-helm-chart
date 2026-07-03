@@ -125,6 +125,107 @@
         }
       }
     },
+    "thanos": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": { "type": "string" },
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "objstore": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "existingSecretKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        "sidecarStoreEndpoint": { "type": "string" },
+        "query": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "replicas": { "type": "integer", "minimum": 1 },
+            "extraStores": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "resources": { "type": "object" }
+          }
+        },
+        "storeGateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "replicas": { "type": "integer", "minimum": 1 },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "size": { "type": "string", "minLength": 1 },
+                "storageClass": { "type": "string" }
+              }
+            },
+            "resources": { "type": "object" }
+          }
+        },
+        "compactor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "replicas": { "type": "integer", "minimum": 1, "maximum": 1 },
+            "retention": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "raw": { "type": "string", "minLength": 1 },
+                "fiveMin": { "type": "string", "minLength": 1 },
+                "oneHour": { "type": "string", "minLength": 1 }
+              }
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "size": { "type": "string", "minLength": 1 },
+                "storageClass": { "type": "string" }
+              }
+            },
+            "resources": { "type": "object" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "objstore": {
+                "properties": { "existingSecret": { "minLength": 1 } },
+                "required": ["existingSecret"]
+              }
+            },
+            "required": ["objstore"]
+          }
+        }
+      ]
+    },
     "kube-prometheus-stack": { "type": "object" },
     "grafana": { "type": "object" },
     "loki": { "type": "object" },

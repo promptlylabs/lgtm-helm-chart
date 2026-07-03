@@ -347,6 +347,109 @@ kube-prometheus-stack:
   kubelet:
     enabled: false
 
+# ═══ 25-thanos.yaml ══════════════════════════════════════════════
+
+# ── thanos ────────────────────────────────────────────────────────────────────
+# Optional long-term metrics (ADR-0010). Disabled by default — no change to the
+# default render.
+#
+# Two halves work together:
+#   1. The Prometheus Thanos SIDECAR uploads completed 2h TSDB blocks to
+#      S3-compatible object storage. It is injected by the Prometheus Operator
+#      and configured under kube-prometheus-stack.prometheus.prometheusSpec.thanos
+#      — a sub-chart passthrough, so it lives in the example overlay, NOT here.
+#   2. The QUERY STACK below (Thanos Query / Store Gateway / Compactor) is owned
+#      by this chart. Store Gateway serves the uploaded blocks, Query federates
+#      the sidecar (recent) with the Store Gateway (historical), and Compactor
+#      compacts/downsamples the bucket and enforces its retention.
+#
+# Enable the whole thing from examples/values-thanos.yaml. All components read the
+# SAME existing objstore Secret (never templated here — create it with External
+# Secrets Operator). See the README "Long-term metrics (Thanos)" section.
+
+thanos:
+  # Master switch for the umbrella-owned query stack (Query / Store Gateway /
+  # Compactor). The sidecar is enabled separately via the kube-prometheus-stack
+  # values (see examples/values-thanos.yaml).
+  enabled: false
+
+  # Image for the umbrella-owned Thanos components. Pinned to match the operator's
+  # sidecar default so sidecar and Store Gateway speak the same block/StoreAPI
+  # version. Renovate keeps this current (renovate.json5 customManager).
+  image:
+    registry: quay.io
+    repository: thanos/thanos
+    # renovate: datasource=docker depName=quay.io/thanos/thanos
+    tag: v0.41.0
+    pullPolicy: IfNotPresent
+
+  # Existing Secret holding a Thanos objstore.yml (type: S3, endpoint, bucket,
+  # access_key, secret_key). NOT created by this chart — provide it out of band
+  # (e.g. External Secrets Operator). Shared by Store Gateway and Compactor.
+  objstore:
+    existingSecret: ""            # e.g. thanos-objstore
+    existingSecretKey: objstore.yml
+
+  # StoreAPI endpoint of the Prometheus sidecar, federated by Query alongside the
+  # Store Gateway. Empty = computed from kube-prometheus-stack.fullnameOverride as
+  # dnssrv+_grpc._tcp.<fullnameOverride>-thanos-discovery.<namespace>.svc.<domain>
+  # (the headless Service created by prometheus.thanosService, gRPC 10901).
+  sidecarStoreEndpoint: ""
+
+  # Thanos Query — Prometheus-API-compatible endpoint that fans out to the
+  # sidecar + Store Gateway and deduplicates. Grafana's Prometheus datasource is
+  # repointed here automatically when the stack is enabled.
+  query:
+    enabled: true
+    replicas: 1
+    # Extra StoreAPI endpoints to query, besides the sidecar + Store Gateway.
+    extraStores: []
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+  # Thanos Store Gateway — serves the TSDB blocks in object storage over StoreAPI.
+  storeGateway:
+    enabled: true
+    replicas: 1
+    # Local disk for the block index/chunk cache (not the blocks themselves).
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""            # "" = default StorageClass
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+  # Thanos Compactor — compacts, downsamples and applies retention IN the bucket.
+  # Required long-term: without it the bucket grows forever and long-range queries
+  # stay slow. Must be a singleton (one compactor per bucket).
+  compactor:
+    enabled: true
+    replicas: 1                   # MUST stay 1 — the Deployment uses Recreate
+    # Object-storage retention per resolution ("0d" = keep forever).
+    retention:
+      raw: 30d
+      fiveMin: 90d
+      oneHour: 1y
+    # Scratch space for compaction/downsampling.
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""            # "" = default StorageClass
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
 # ═══ 30-grafana.yaml ═════════════════════════════════════════════
 
 # ── Grafana (standalone chart, ADR-0003) ─────────────────────────────────────

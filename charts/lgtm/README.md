@@ -80,6 +80,10 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.node.*` | enabled | DaemonSet collector: resources, tolerations |
 | `collectors.cluster.*` | enabled | Cluster collector: resources |
 | `collectors.faro.*` | disabled | Browser telemetry: requires `image` (contrib distro) + `corsAllowedOrigins` |
+| `thanos.enabled` | `false` | Umbrella-owned Thanos query stack (Query/Store Gateway/Compactor) — see [Long-term metrics (Thanos)](#long-term-metrics-thanos) |
+| `thanos.objstore.existingSecret` | `""` | Existing Secret holding the Thanos `objstore.yml` (shared by Store Gateway + Compactor) |
+
+The Thanos **sidecar** itself is a `kube-prometheus-stack.*` pass-through (not an umbrella key); the [`values-thanos.yaml`](examples/values-thanos.yaml) overlay wires both.
 
 ### Shipping your own telemetry and dashboards
 
@@ -91,6 +95,16 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 ### Storage
 
 Defaults are PVC-backed local storage so the chart installs on any cluster with a default StorageClass (Prometheus 20Gi, Tempo 15Gi, Loki 10Gi, Pyroscope 10Gi). For Loki/Tempo on each cloud's blob storage with keyless workload identity, start from the matching overlay: [`values-azure.yaml`](examples/values-azure.yaml) (Blob Storage + Workload Identity, plus the full Grafana PostgreSQL + Entra ID pattern), [`values-aws.yaml`](examples/values-aws.yaml) (S3 + IRSA), [`values-gcp.yaml`](examples/values-gcp.yaml) (GCS + GKE Workload Identity). Bare-metal Talos clusters keep the local-storage defaults — [`values-talos.yaml`](examples/values-talos.yaml) covers the Talos-specific requirements (privileged Pod Security label for the node collector, control-plane tolerations).
+
+### Long-term metrics (Thanos)
+
+Prometheus is storage-only with local retention (ADR-0005), so metrics don't survive node loss and aren't queryable beyond retention. Enabling Thanos (ADR-0010, **off by default**) fixes both: the Prometheus Operator injects a **sidecar** that uploads completed 2h TSDB blocks to S3-compatible object storage, and this chart's own **Query + Store Gateway + Compactor** make those blocks queryable in Grafana beyond local retention. Grafana's Prometheus datasource is repointed to Thanos Query automatically — dashboards and correlations are unchanged (the `prometheus` datasource UID is kept).
+
+Start from [`values-thanos.yaml`](examples/values-thanos.yaml) (generic S3 — works with Cloudflare R2, AWS S3, MinIO). It enables the sidecar (`kube-prometheus-stack.prometheus.prometheusSpec.thanos` + `thanosService`) and the umbrella `thanos.*` stack, both referencing one **existing** Secret you provide out of band (e.g. External Secrets Operator): a `thanos-objstore` Secret whose `objstore.yml` key holds the Thanos object-store config. Credentials never go in values.
+
+Object-store notes: `endpoint` is the host only (no scheme, no bucket), `bucket_lookup_type: auto` gives path-style for non-AWS endpoints, and keep `signature_version2: false` (S3 SigV4). For R2 the endpoint is `<account-id>.r2.cloudflarestorage.com` (or `<account-id>.eu.r2.cloudflarestorage.com` for the EU jurisdiction) with `region: auto`.
+
+Keep local `retention` at least a few hours so blocks upload before eviction — the default 7d is fine, 24h is safe. With sidecar compaction disabled, don't set `retentionSize` so tight that a 2h block is evicted before it uploads (that gaps the bucket): prefer time-based retention. The **Compactor is a singleton** — it compacts, downsamples and enforces the bucket's retention; without it the bucket grows forever.
 
 ### Renaming and relocating components
 
@@ -113,7 +127,7 @@ plus the computed ones via `lgtm.endpoints.*`.
 - **Data and uninstall**: `helm uninstall` keeps the data PVCs (Loki's StatefulSet auto-delete is explicitly disabled in the defaults) and keeps the CRDs — both are standard Helm behavior. A reinstall into the same namespace re-adopts the existing data. To wipe everything: uninstall, then delete the PVCs in the namespace and the `monitoring.coreos.com`/`opentelemetry.io` CRDs.
 - **Grafana state is ephemeral by default** (SQLite in the pod, persistence off): everything provisioned by ConfigMaps — dashboards, datasources, alert rules — reappears after a restart, but content created *in the UI* (dashboards, contact points, silences) is lost. For durable UI state use an external database (see the azure example) or enable `grafana.persistence`.
 - **Alerting**: Alertmanager is disabled; alerting is Grafana-managed and the chart ships no alert rules. Provision rules and contact points as ConfigMaps labelled `grafana_alert: "1"` (Grafana alerting provisioning format) — with the ephemeral-state caveat above, never create them only in the UI.
-- **Scaling**: the single-binary defaults are deliberate (see ADR-0004). Loki with filesystem storage is hard-limited to 1 replica — moving to object storage (cloud examples) is the prerequisite for scaling any of Loki/Tempo, and Prometheus HA is out of scope for this chart's defaults.
+- **Scaling**: the single-binary defaults are deliberate (see ADR-0004). Loki with filesystem storage is hard-limited to 1 replica — moving to object storage (cloud examples) is the prerequisite for scaling any of Loki/Tempo, and Prometheus HA is out of scope for this chart's defaults. Durable, long-term-queryable metrics are available separately via the optional Thanos sidecar + query stack (see [Long-term metrics (Thanos)](#long-term-metrics-thanos)).
 
 ## Development
 

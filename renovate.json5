@@ -19,6 +19,24 @@
   // Regenerate Chart.lock when Chart.yaml dependencies change
   // (charts/*.tgz stay gitignored).
   postUpdateOptions: ["helmUpdateSubChartArchives"],
+  // The Thanos image is pinned in a GENERATED values file (values.yaml is
+  // assembled from values.d/ — ADR-0007) and in the example overlay. This custom
+  // manager tracks the `# renovate:`-annotated tag across all three files so a
+  // bump edits them together and `make check-values` stays green.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: [
+        "/charts/lgtm/values\\.d/25-thanos\\.yaml$/",
+        "/charts/lgtm/values\\.yaml$/",
+        "/charts/lgtm/examples/values-thanos\\.yaml$/",
+      ],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+tag:\\s*\"?(?<currentValue>[^\"\\s]+)\"?",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+image:\\s*\\S+:(?<currentValue>[^\"\\s]+)",
+      ],
+    },
+  ],
   packageRules: [
     {
       // Non-major chart dependencies: one grouped weekly PR, automerged when
@@ -66,6 +84,48 @@
       labels: ["dependencies"],
       automerge: true,
       platformAutomerge: true,
+    },
+    {
+      // The stock helm-values manager would bump the Thanos tag in the generated
+      // charts/lgtm/values.yaml alone, desyncing it from its values.d/ fragment
+      // and failing `make check-values`. The customManager above owns that image
+      // (editing fragment + generated file + overlay together) instead.
+      matchManagers: ["helm-values"],
+      enabled: false,
+    },
+    {
+      // Thanos image (umbrella Query/Store/Compactor + the sidecar in the overlay),
+      // non-major: grouped, chart version bumped, automerged behind lint + smoke.
+      matchPackageNames: ["quay.io/thanos/thanos"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "thanos image (non-major)",
+      labels: ["dependencies"],
+      automerge: true,
+      platformAutomerge: true,
+      bumpVersions: [
+        {
+          name: "Bump chart version (thanos non-major)",
+          filePatterns: ["/(^|/)charts/lgtm/Chart\\.yaml$/"],
+          matchStrings: ["(?:^|\\n)version:\\s\"?(?<version>\\d+\\.\\d+\\.\\d+)\"?(?:$|\\n)"],
+          bumpType: "{{#if isPatch}}patch{{else}}minor{{/if}}",
+        },
+      ],
+    },
+    {
+      // Thanos image major: separate PR, never automerged — a Thanos major can
+      // change objstore/flag behaviour. Chart bumps a minor (same as upstream majors).
+      matchPackageNames: ["quay.io/thanos/thanos"],
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "major-upstream"],
+      bumpVersions: [
+        {
+          name: "Bump chart version (thanos major)",
+          filePatterns: ["/(^|/)charts/lgtm/Chart\\.yaml$/"],
+          matchStrings: ["(?:^|\\n)version:\\s\"?(?<version>\\d+\\.\\d+\\.\\d+)\"?(?:$|\\n)"],
+          bumpType: "minor",
+        },
+      ],
     },
   ],
 }

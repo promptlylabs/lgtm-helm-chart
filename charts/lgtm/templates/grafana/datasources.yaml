@@ -22,11 +22,13 @@ data:
       {{- /* Each datasource renders only when its component is in this
       release OR an external endpoint is configured via lgtm.endpoints.* */}}
       {{- if or (index .Values "kube-prometheus-stack" "enabled") .Values.lgtm.endpoints.prometheus }}
-      # Prometheus — exemplars point at Tempo; correlations link metrics to logs
+      # Prometheus — exemplars point at Tempo; correlations link metrics to logs.
+      # url follows Thanos Query when the long-term stack is enabled (ADR-0010),
+      # otherwise the in-cluster Prometheus; uid stays "prometheus" either way.
       - name: Prometheus
         type: prometheus
         uid: prometheus
-        url: {{ include "lgtm.prometheus.endpoint" . }}
+        url: {{ include "lgtm.metrics.readEndpoint" . }}
         access: proxy
         isDefault: true
         editable: false
