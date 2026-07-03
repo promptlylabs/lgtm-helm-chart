@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.2.0
+version: 0.3.0
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -43,7 +43,7 @@ dependencies:
   # https://artifacthub.io/packages/helm/grafana-community/loki
   # (chart moved to grafana-community in March 2026; grafana.github.io 7.x is GEL-only)
   - name: loki
-    version: 17.4.9
+    version: 18.1.1
     repository: https://grafana-community.github.io/helm-charts
     condition: loki.enabled
   # https://artifacthub.io/packages/helm/grafana-community/tempo — single-binary chart
