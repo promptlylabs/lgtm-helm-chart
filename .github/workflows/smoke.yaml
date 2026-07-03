@@ -27,7 +27,7 @@ jobs:
         uses: azure/setup-helm@v5
 
       - name: Cache Helm repository cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/helm
           key: helm-${{ runner.os }}-${{ hashFiles('charts/lgtm/Chart.lock') }}
@@ -45,7 +45,7 @@ jobs:
       # across runs; keyed on Chart.lock since image versions follow chart
       # versions, with a prefix fallback so version bumps start warm.
       - name: Restore docker.io mirror cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/registry-cache/docker-io
           key: registry-cache-docker-io-${{ hashFiles('charts/lgtm/Chart.lock') }}
@@ -53,7 +53,7 @@ jobs:
             registry-cache-docker-io-
 
       - name: Restore quay.io mirror cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/registry-cache/quay-io
           key: registry-cache-quay-io-${{ hashFiles('charts/lgtm/Chart.lock') }}
@@ -61,7 +61,7 @@ jobs:
             registry-cache-quay-io-
 
       - name: Restore ghcr.io mirror cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/registry-cache/ghcr-io
           key: registry-cache-ghcr-io-${{ hashFiles('charts/lgtm/Chart.lock') }}
@@ -134,7 +134,7 @@ jobs:
 
       - name: Cache kind node image tarball
         id: kind-node-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/kind-node-image.tar
           key: kind-node-${{ steps.kind-node.outputs.image }}
