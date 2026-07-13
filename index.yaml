@@ -14,6 +14,74 @@ entries:
         url: https://promptlylabs.github.io/lgtm-helm-chart/pgp_keys.asc
     apiVersion: v2
     appVersion: "2026.06"
+    created: "2026-07-13T03:08:44.946478679Z"
+    dependencies:
+    - condition: kube-prometheus-stack.enabled
+      name: kube-prometheus-stack
+      repository: https://prometheus-community.github.io/helm-charts
+      version: 87.10.1
+    - condition: grafana.enabled
+      name: grafana
+      repository: https://grafana-community.github.io/helm-charts
+      version: 12.7.2
+    - condition: loki.enabled
+      name: loki
+      repository: https://grafana-community.github.io/helm-charts
+      version: 18.4.0
+    - condition: tempo.enabled
+      name: tempo
+      repository: https://grafana-community.github.io/helm-charts
+      version: 2.2.3
+    - condition: pyroscope.enabled
+      name: pyroscope
+      repository: https://grafana.github.io/helm-charts
+      version: 2.1.0
+    - condition: opentelemetry-operator.enabled
+      name: opentelemetry-operator
+      repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+      version: 0.118.0
+    description: An opinionated observability stack — Loki, Grafana, Tempo, Prometheus
+      and Pyroscope in single-binary mode, collected OpenTelemetry-natively by operator-managed
+      collectors, with correlated datasources and OTel-native dashboards included.
+      One install per cluster.
+    digest: 3296d00a7e2e6e4b7046211ab25fc7ba955d830afa7b1224c55f02cc2cbab71a
+    home: https://github.com/promptlylabs/lgtm-helm-chart
+    icon: https://promptlylabs.github.io/lgtm-helm-chart/logo.png
+    keywords:
+    - observability
+    - lgtm
+    - loki
+    - grafana
+    - tempo
+    - prometheus
+    - pyroscope
+    - opentelemetry
+    - profiling
+    - tracing
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - name: Promptly Labs
+      url: https://github.com/promptlylabs
+    name: lgtm
+    sources:
+    - https://github.com/promptlylabs/lgtm-helm-chart
+    type: application
+    urls:
+    - https://github.com/promptlylabs/lgtm-helm-chart/releases/download/lgtm-0.5.1/lgtm-0.5.1.tgz
+    version: 0.5.1
+  - annotations:
+      artifacthub.io/category: monitoring-logging
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: source
+          url: https://github.com/promptlylabs/lgtm-helm-chart
+        - name: support
+          url: https://github.com/promptlylabs/lgtm-helm-chart/issues
+      artifacthub.io/signKey: |
+        fingerprint: "B0E0D6CBC8F4077B7A29568708FCD164BF5D41C8"
+        url: https://promptlylabs.github.io/lgtm-helm-chart/pgp_keys.asc
+    apiVersion: v2
+    appVersion: "2026.06"
     created: "2026-07-06T00:57:32.012919814Z"
     dependencies:
     - condition: kube-prometheus-stack.enabled
@@ -815,4 +883,4 @@ entries:
     urls:
     - https://github.com/promptlylabs/lgtm-helm-chart/releases/download/lgtm-0.1.0/lgtm-0.1.0.tgz
     version: 0.1.0
-generated: "2026-07-06T00:57:32.012953637Z"
+generated: "2026-07-13T03:08:44.946574307Z"
