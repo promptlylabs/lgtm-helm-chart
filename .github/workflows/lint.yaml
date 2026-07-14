@@ -76,6 +76,18 @@ jobs:
           done
           echo "Thanos enabled-path wiring OK"
 
+      # Assert the bare-metal overlay wires the hostNetwork hardening knobs onto
+      # the node collector (ADR-0011), and that they stay OFF by default.
+      - name: Helm template (bare-metal enabled — assert wiring)
+        run: |
+          out=$(helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-baremetal.yaml --show-only templates/collectors/node-collector.yaml)
+          echo "$out" | grep -q 'collect_all_network_interfaces' || { echo "missing collect_all_network_interfaces"; exit 1; }
+          echo "$out" | grep -q 'port: 18888'                     || { echo "missing internal metrics port 18888"; exit 1; }
+          def=$(helm template lgtm charts/lgtm/ --namespace observability --show-only templates/collectors/node-collector.yaml)
+          echo "$def" | grep -q 'collect_all_network_interfaces' && { echo "collect_all_network_interfaces should be off by default"; exit 1; }
+          echo "$def" | grep -q 'port: 8888'                      || { echo "default internal metrics port should be 8888"; exit 1; }
+          echo "bare-metal enabled-path wiring OK"
+
       - name: Set up kubeconform
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
         env:

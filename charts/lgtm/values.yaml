@@ -93,6 +93,20 @@ collectors:
 
   node:
     enabled: true
+    # Collect node network IO/error metrics from ALL interfaces, not just the
+    # default (eth0). On multi-NIC bare-metal nodes with no default interface the
+    # kubelet reports an empty interface name and kubeletstats emits no
+    # k8s.node.network.io at all (contrib #40915); the opt-in fix landed in
+    # collector 0.131 (#38737). Adds an `interface` resource attribute — one
+    # series per node NIC, so cardinality stays bounded.
+    collectAllNetworkInterfaces: false
+    # Port for the collector's own internal telemetry metrics endpoint. The node
+    # collector runs hostNetwork, so this binds a host port; on bare-metal distros
+    # where :8888 is already taken, set a free port to avoid
+    # "bind: address already in use". Rendered via service.telemetry.metrics.readers
+    # (the legacy service.telemetry.metrics.address shortcut was removed in
+    # collector v0.111+).
+    internalMetricsPort: 8888
     resources:
       limits:
         memory: 512Mi
