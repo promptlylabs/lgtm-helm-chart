@@ -3,11 +3,35 @@ One ConfigMap per dashboard JSON in dashboards/, discovered by the Grafana
 dashboards sidecar (label grafana_dashboard: "1"). The grafana_folder
 annotation places them in a Grafana folder; individual dashboards can be
 dropped via lgtm.dashboards.exclude.
+
+$gate maps a dashboard basename to the component it observes: the dashboard is
+only provisioned when that component is enabled (no point shipping a dashboard
+for a component that isn't in the release). Basenames absent from the map (e.g.
+home) always render. The otel-* dashboards read collector-pushed telemetry, so
+they follow collectors.enabled; the component self-observability dashboards
+(loki, prometheus, ...) follow their own component. The self-metrics they query
+are only present when the in-cluster collectors self-scrape
+(lgtm.metaMonitoring.enabled=false, the default) — see ADR-0012.
 */ -}}
 {{- if .Values.lgtm.dashboards.enabled }}
+{{- $collectors := .Values.collectors.enabled }}
+{{- $gate := dict
+  "loki"                      .Values.loki.enabled
+  "prometheus"                (index .Values "kube-prometheus-stack" "enabled")
+  "grafana"                   .Values.grafana.enabled
+  "tempo"                     .Values.tempo.enabled
+  "pyroscope"                 .Values.pyroscope.enabled
+  "otel-collector"            $collectors
+  "otel-host-metrics"         $collectors
+  "otel-network"              $collectors
+  "otel-karpenter-nap"        $collectors
+  "otel-kubernetes-cluster"   $collectors
+  "otel-kubernetes-container" $collectors
+  "otel-kubernetes-namespace" $collectors
+  "otel-kubernetes-storage"   $collectors }}
 {{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
 {{- $name := base $path | trimSuffix ".json" }}
-{{- if not (has $name $.Values.lgtm.dashboards.exclude) }}
+{{- if and (not (has $name $.Values.lgtm.dashboards.exclude)) (or (not (hasKey $gate $name)) (index $gate $name)) }}
 ---
 apiVersion: v1
 kind: ConfigMap

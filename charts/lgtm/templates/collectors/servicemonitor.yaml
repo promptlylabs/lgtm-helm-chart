@@ -1,0 +1,33 @@
+{{- /*
+Scrapes the collectors' own internal telemetry (otelcol_* metrics on the
+operator-managed :8888 "monitoring" Service) so the OTel Collector dashboard
+has data. Labelled opentelemetry.io/scope: observability like every other
+bundled component (ADR-0005, ADR-0012): with lgtm.metaMonitoring.enabled=false
+(default) the node collector's target allocator scrapes it and pushes the
+metrics via OTLP to Prometheus; with metaMonitoring enabled it is reserved for
+the external meta stack. The operator creates the monitoring Services for every
+collector CR; one selector on the operator's service-type label covers node and
+cluster (and any future collector).
+*/ -}}
+{{- if .Values.collectors.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: lgtm-otel-collector-monitoring
+  namespace: {{ .Release.Namespace }}
+  labels:
+    opentelemetry.io/scope: observability
+    {{- include "lgtm.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: opentelemetry-operator
+      operator.opentelemetry.io/collector-service-type: monitoring
+  endpoints:
+    - port: monitoring
+      path: /metrics
+      interval: 30s
+{{- end }}

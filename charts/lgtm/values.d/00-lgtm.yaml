@@ -27,8 +27,11 @@ lgtm:
   datasources:
     enabled: true
 
-  # OTel-native dashboards shipped with the chart, provisioned via the
-  # dashboards sidecar.
+  # Dashboards shipped with the chart, provisioned via the dashboards sidecar:
+  # OTel-native infrastructure views plus first-party component
+  # self-observability dashboards. Each is gated on the component it observes
+  # (see templates/grafana/dashboards.yaml, ADR-0012) — a dashboard is only
+  # provisioned when its component is enabled.
   dashboards:
     enabled: true
     # Grafana folder the dashboards land in (grafana_folder annotation).

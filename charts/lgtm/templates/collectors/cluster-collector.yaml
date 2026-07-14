@@ -160,6 +160,12 @@ spec:
         sampling_thereafter: 200
 
     service:
+      # Distinct self-identity so this collector's own otelcol_* metrics don't
+      # collide with the node collector's when both are scraped and pushed to
+      # Prometheus (the distribution default is a shared "otelcol-k8s").
+      telemetry:
+        resource:
+          service.name: otel-cluster-collector
       {{- if .Values.collectors.persistentQueue.enabled }}
       extensions: [file_storage/queue]
       {{- end }}

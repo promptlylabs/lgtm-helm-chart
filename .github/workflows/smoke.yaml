@@ -265,8 +265,20 @@ jobs:
           ds=$(curl -fsS -u "admin:$GP" localhost:13000/api/datasources | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           [ "$ds" -ge 4 ] || fail "expected >=4 Grafana datasources, got $ds"
           db=$(curl -fsS -u "admin:$GP" 'localhost:13000/api/search?type=dash-db' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
-          [ "$db" -ge 9 ] || fail "expected >=9 Grafana dashboards, got $db"
+          # Full default stack is on here, so every component-gated dashboard
+          # provisions: 8 infra (home + 7 otel-*) + 6 component (loki, prometheus,
+          # otel-collector, grafana, tempo, pyroscope) = 14 (ADR-0011).
+          [ "$db" -ge 14 ] || fail "expected >=14 Grafana dashboards, got $db"
           echo "grafana OK ($ds datasources, $db dashboards)"
+
+          # The component dashboards are gated on their component being enabled;
+          # assert their ConfigMaps exist (the sidecar count above proves Grafana
+          # ingested them, this pins the gating wiring).
+          kubectl -n observability get configmap \
+            lgtm-dashboard-loki lgtm-dashboard-prometheus lgtm-dashboard-otel-collector \
+            lgtm-dashboard-grafana lgtm-dashboard-tempo lgtm-dashboard-pyroscope >/dev/null \
+            || fail "a component dashboard ConfigMap is missing (gating regression)"
+          echo "component dashboard ConfigMaps present"
 
       - name: Check collectors for steady-state errors
         run: |
