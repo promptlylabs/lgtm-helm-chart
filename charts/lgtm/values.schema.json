@@ -74,6 +74,29 @@
             "config": { "type": "object" }
           }
         },
+        "persistentQueue": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "initImage": { "type": "string", "minLength": 1 },
+            "node": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "hostPath": { "type": "string", "minLength": 1 }
+              }
+            },
+            "cluster": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": { "type": "string", "minLength": 1 },
+                "storageClassName": { "type": "string" }
+              }
+            }
+          }
+        },
         "node": {
           "type": "object",
           "additionalProperties": false,

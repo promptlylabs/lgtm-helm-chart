@@ -85,6 +85,11 @@ sub-key indent, e.g. with nindent 8.
 {{- define "lgtm.collector.sendingQueue" -}}
 sending_queue:
   enabled: true
+  {{- if .Values.collectors.persistentQueue.enabled }}
+  # Durable on-disk queue (ADR-0011) — survives collector restarts. The
+  # file_storage/queue extension and its volume are defined on each collector.
+  storage: file_storage/queue
+  {{- end }}
   batch:
     sizer: items
     min_size: 1024

@@ -26,6 +26,10 @@ lgtm:
   clusterName: <cluster-name>              # e.g. baremetal-prod
 
 collectors:
+  # Durable sending queues so queued batches survive a collector restart during
+  # a backend-down window (node → hostPath, cluster → PVC). Off by default.
+  persistentQueue:
+    enabled: true
   node:
     collectAllNetworkInterfaces: true
     internalMetricsPort: 18888             # a free host port (default 8888)

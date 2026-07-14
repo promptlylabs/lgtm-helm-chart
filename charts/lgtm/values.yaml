@@ -91,6 +91,25 @@ collectors:
     detectors: []
     config: {}
 
+  # Opt-in durable sending queues (ADR-0011). Backs each exporter's in-memory
+  # sending_queue with a file_storage extension on durable storage, so queued
+  # batches survive a collector restart during a backend-down window. Off by
+  # default (today's in-memory queue). node → hostPath (one dir per node),
+  # cluster → PVC. Both run a chown initContainer so the queue dir is writable
+  # by the collector user (UID 10001) — the collector image is distroless.
+  persistentQueue:
+    enabled: false
+    # Image for the chown initContainer; must provide `chown` (the collector
+    # image has no shell). Pinned/tracked like any other image.
+    initImage: busybox:1.37
+    node:
+      # Host directory backing the DaemonSet queue (created if missing).
+      hostPath: /var/lib/otelcol-queue
+    cluster:
+      # PVC for the StatefulSet queue.
+      size: 2Gi
+      storageClassName: ""   # empty uses the cluster default StorageClass
+
   node:
     enabled: true
     # Collect node network IO/error metrics from ALL interfaces, not just the

@@ -83,8 +83,10 @@ jobs:
           out=$(helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-baremetal.yaml --show-only templates/collectors/node-collector.yaml)
           echo "$out" | grep -q 'collect_all_network_interfaces' || { echo "missing collect_all_network_interfaces"; exit 1; }
           echo "$out" | grep -q 'port: 18888'                     || { echo "missing internal metrics port 18888"; exit 1; }
+          echo "$out" | grep -q 'file_storage/queue'              || { echo "missing persistent queue extension"; exit 1; }
           def=$(helm template lgtm charts/lgtm/ --namespace observability --show-only templates/collectors/node-collector.yaml)
           echo "$def" | grep -q 'collect_all_network_interfaces' && { echo "collect_all_network_interfaces should be off by default"; exit 1; }
+          echo "$def" | grep -q 'file_storage/queue'             && { echo "persistent queue should be off by default"; exit 1; }
           echo "$def" | grep -q 'port: 8888'                      || { echo "default internal metrics port should be 8888"; exit 1; }
           echo "bare-metal enabled-path wiring OK"
 

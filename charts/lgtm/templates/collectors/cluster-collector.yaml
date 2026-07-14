@@ -54,6 +54,14 @@ spec:
         memory: 32Mi
 
   config:
+    {{- if .Values.collectors.persistentQueue.enabled }}
+    extensions:
+      # Durable on-disk queue backing the exporter sending queues (ADR-0011).
+      # Mounted from a PVC (volumeClaimTemplates); writable by the collector via
+      # the queue-permissions initContainer.
+      file_storage/queue:
+        directory: /var/lib/otelcol/queue
+    {{- end }}
     receivers:
       # Cluster metrics (replaces kube-state-metrics)
       k8s_cluster:
@@ -152,6 +160,9 @@ spec:
         sampling_thereafter: 200
 
     service:
+      {{- if .Values.collectors.persistentQueue.enabled }}
+      extensions: [file_storage/queue]
+      {{- end }}
       pipelines:
         metrics:
           receivers: [k8s_cluster, prometheus]
@@ -161,6 +172,35 @@ spec:
           receivers: [k8s_events]
           processors: [memory_limiter, resource/events]
           exporters: [otlp_http/loki]
+
+  {{- if .Values.collectors.persistentQueue.enabled }}
+  # file_storage runs as the collector user (UID 10001); make the PVC-backed
+  # queue dir writable before the collector starts (distroless image).
+  initContainers:
+    - name: queue-permissions
+      image: {{ .Values.collectors.persistentQueue.initImage }}
+      command: ["chown", "-R", "10001:10001", "/var/lib/otelcol/queue"]
+      securityContext:
+        runAsUser: 0
+        runAsNonRoot: false
+      volumeMounts:
+        - name: queue
+          mountPath: /var/lib/otelcol/queue
+  volumeClaimTemplates:
+    - metadata:
+        name: queue
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.collectors.persistentQueue.cluster.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.collectors.persistentQueue.cluster.size }}
+  volumeMounts:
+    - name: queue
+      mountPath: /var/lib/otelcol/queue
+  {{- end }}
 
   resources:
     {{- toYaml .Values.collectors.cluster.resources | nindent 4 }}
