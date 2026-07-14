@@ -77,7 +77,10 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.image` | `""` | Override the collector image (node + cluster) |
 | `collectors.priorityClassName` | `""` | PriorityClass for collector pods (must exist) |
 | `collectors.resourceDetection.detectors` | `[]` | resourcedetection processor detectors (e.g. `[azure]`) |
+| `collectors.persistentQueue.enabled` | `false` | Back exporter sending queues with a `file_storage` extension on durable storage (node → hostPath, cluster → PVC) so queued batches survive a restart. See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.node.*` | enabled | DaemonSet collector: resources, tolerations |
+| `collectors.node.collectAllNetworkInterfaces` | `false` | Collect node network metrics from **all** NICs, not just the default — needed on multi-NIC bare-metal nodes with no default interface (adds an `interface` attribute). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
+| `collectors.node.internalMetricsPort` | `8888` | Host port for the node collector's own internal-telemetry metrics endpoint (the DaemonSet is hostNetwork). Move it if `:8888` is taken on the host |
 | `collectors.cluster.*` | enabled | Cluster collector: resources |
 | `collectors.faro.*` | disabled | Browser telemetry: requires `image` (contrib distro) + `corsAllowedOrigins` |
 | `thanos.enabled` | `false` | Umbrella-owned Thanos query stack (Query/Store Gateway/Compactor) — see [Long-term metrics (Thanos)](#long-term-metrics-thanos) |
@@ -95,6 +98,14 @@ The Thanos **sidecar** itself is a `kube-prometheus-stack.*` pass-through (not a
 ### Storage
 
 Defaults are PVC-backed local storage so the chart installs on any cluster with a default StorageClass (Prometheus 20Gi, Tempo 15Gi, Loki 10Gi, Pyroscope 10Gi). For Loki/Tempo on each cloud's blob storage with keyless workload identity, start from the matching overlay: [`values-azure.yaml`](examples/values-azure.yaml) (Blob Storage + Workload Identity, plus the full Grafana PostgreSQL + Entra ID pattern), [`values-aws.yaml`](examples/values-aws.yaml) (S3 + IRSA), [`values-gcp.yaml`](examples/values-gcp.yaml) (GCS + GKE Workload Identity). Bare-metal Talos clusters keep the local-storage defaults — [`values-talos.yaml`](examples/values-talos.yaml) covers the Talos-specific requirements (privileged Pod Security label for the node collector, control-plane tolerations).
+
+### Bare-metal / hostNetwork
+
+The node collector is a `hostNetwork` DaemonSet (ADR-0005). On multi-NIC bare-metal clusters (RKE2 and similar on-prem distros) two knobs — both **off by default** so cloud/single-NIC installs are unchanged — harden it (ADR-0011). The [`values-baremetal.yaml`](examples/values-baremetal.yaml) overlay turns them on:
+
+- **`collectors.node.collectAllNetworkInterfaces`** — when a node has several NICs and no default interface, the kubelet reports an empty interface name and the kubeletstats receiver emits **no** `k8s.node.network.io` at all ([contrib #40915](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/40915)). Setting this to `true` collects from every interface and adds an `interface` resource attribute — one series per node NIC, so cardinality stays bounded. The shipped **OTel Network** dashboard aggregates node network metrics with `sum`, so it renders unchanged with the extra label.
+- **`collectors.node.internalMetricsPort`** — because the DaemonSet shares the host network, the collector's own internal-telemetry endpoint binds a host port. On distros where `:8888` is already bound the collector crashes with `bind: address already in use`; set a free port. It is rendered via `service.telemetry.metrics.readers` (the `service.telemetry.metrics.address` shortcut was removed in collector v0.111+). **Caveat:** nothing in this chart scrapes the internal-telemetry endpoint by default. If you add a scrape for it — or enable the operator self-monitor via `spec.observability.metrics`, which targets `8888` — point it at the port you set here.
+- **`collectors.persistentQueue.enabled`** — by default the exporter sending queues are in-memory (ADR-0009), so a collector restart during a backend-down window drops queued batches. Setting this to `true` backs each queue with a `file_storage` extension on durable storage — a per-node hostPath for the DaemonSet (`collectors.persistentQueue.node.hostPath`), a per-replica PVC for the StatefulSet (`collectors.persistentQueue.cluster.size` / `.storageClassName`). A small `chown` initContainer (`collectors.persistentQueue.initImage`) makes the queue dir writable by the collector (UID 10001), since the collector image is distroless. Useful anywhere, but most valuable on on-prem clusters with a less reliable link to the backends.
 
 ### Long-term metrics (Thanos)
 

@@ -1,0 +1,44 @@
+# Bare-metal / hostNetwork hardening overlay (RKE2 and similar on-prem distros).
+#
+# The node collector is a hostNetwork DaemonSet. On multi-NIC bare-metal nodes
+# two things go wrong that don't show up on cloud/single-NIC nodes; this overlay
+# turns on the opt-in knobs that fix them (all default off in the chart, so
+# existing installs are unaffected). See ADR-0011.
+#
+#   1. Multi-NIC node network metrics — when a node has several NICs and no
+#      default interface, the kubelet reports an empty interface name and the
+#      kubeletstats receiver emits no k8s.node.network.io at all (contrib
+#      #40915). collectAllNetworkInterfaces collects from every interface and
+#      adds an `interface` resource attribute (one series per node NIC).
+#
+#   2. Internal-telemetry port conflict — hostNetwork binds a host port for the
+#      collector's own metrics endpoint. On distros where :8888 is already taken
+#      the collector crashes with "bind: address already in use"; move it to a
+#      free port. NOTE: nothing in the chart scrapes this endpoint by default —
+#      if you add a scrape (or enable the operator self-monitor) point it at the
+#      port set here, not the hardcoded 8888.
+#
+# Like values-talos.yaml, bare-metal control-plane nodes are commonly
+# schedulable, so the node collector tolerates the control-plane taint. Storage
+# stays on the chart's filesystem/PVC defaults (needs a default StorageClass).
+
+lgtm:
+  clusterName: <cluster-name>              # e.g. baremetal-prod
+
+collectors:
+  # Durable sending queues so queued batches survive a collector restart during
+  # a backend-down window (node → hostPath, cluster → PVC). Off by default.
+  persistentQueue:
+    enabled: true
+  node:
+    collectAllNetworkInterfaces: true
+    internalMetricsPort: 18888             # a free host port (default 8888)
+    # Overriding tolerations REPLACES the chart default list, so keep the
+    # CriticalAddonsOnly entry alongside the control-plane one.
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
