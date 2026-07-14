@@ -35,7 +35,7 @@ The architecture is OTLP-push with a scrape-less, storage-only Prometheus: colle
 | pyroscope | [grafana](https://github.com/grafana/pyroscope/tree/main/operations/pyroscope/helm/pyroscope) | single binary, v2 storage |
 | opentelemetry-operator | [open-telemetry](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator) | manages the 3 collector CRs below |
 
-Plus, owned by this chart: **node**, **cluster** and (optional) **faro** OpenTelemetryCollector CRs, a Grafana datasources ConfigMap with full trace/log/metric/profile correlations, and nine OTel-native dashboards (home, host metrics, cluster, namespace, container, storage, network, Karpenter/NAP, Loki operational).
+Plus, owned by this chart: **node**, **cluster** and (optional) **faro** OpenTelemetryCollector CRs, a Grafana datasources ConfigMap with full trace/log/metric/profile correlations, and fourteen dashboards: OTel-native infrastructure views (home, host metrics, cluster, namespace, container, storage, network, Karpenter/NAP) plus first-party component self-observability dashboards (Loki, Prometheus, OTel Collector, Grafana, Tempo, Pyroscope). Each dashboard is provisioned only when the component it observes is enabled (the `otel-*` views follow `collectors.enabled`; `home` is always shipped). The component dashboards read self-metrics that are only collected with in-cluster self-monitoring on — `lgtm.metaMonitoring.enabled=false`, the default (see [ADR-0012](../../docs/adrs/0012-first-party-component-dashboards.md)).
 
 ## Install
 
@@ -69,9 +69,9 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `lgtm.clusterDomain` | `cluster.local` | Cluster DNS domain for computed endpoints |
 | `lgtm.endpoints.*` | `""` (computed) | Override per-component endpoints (external Prometheus etc.) |
 | `lgtm.datasources.enabled` | `true` | Provision the correlated Grafana datasources |
-| `lgtm.dashboards.enabled` | `true` | Provision the shipped dashboards |
+| `lgtm.dashboards.enabled` | `true` | Provision the shipped dashboards (each gated on the component it observes) |
 | `lgtm.dashboards.folder` | `Platform` | Grafana folder for the shipped dashboards |
-| `lgtm.dashboards.exclude` | `[]` | Skip dashboards by basename (e.g. `[otel-karpenter-nap]`) |
+| `lgtm.dashboards.exclude` | `[]` | Skip dashboards by basename (e.g. `[loki, prometheus, otel-collector, grafana, tempo, pyroscope, otel-karpenter-nap]`) |
 | `lgtm.metaMonitoring.enabled` | `false` | Reserve the observability stack's own `scope: observability` ServiceMonitors for a separate meta-monitoring stack; default `false` scrapes them in-cluster |
 | `collectors.enabled` | `true` | Master switch for all collector CRs |
 | `collectors.image` | `""` | Override the collector image (node + cluster) |
@@ -142,7 +142,7 @@ plus the computed ones via `lgtm.endpoints.*`.
 
 ## Development
 
-Chart defaults live in `values.d/` fragments — edit those, then `make values` to regenerate `values.yaml` (CI rejects stale files). `make deps lint template kubeconform` runs the full local validation. Dashboards are plain JSON under `dashboards/`; each file becomes one ConfigMap.
+Chart defaults live in `values.d/` fragments — edit those, then `make values` to regenerate `values.yaml` (CI rejects stale files). `make deps lint template kubeconform` runs the full local validation. Dashboards are plain JSON under `dashboards/`; each file becomes one ConfigMap, gated on its component in `templates/grafana/dashboards.yaml` (the `$gate` map).
 
 ## License
 

@@ -2,7 +2,7 @@
 
 [![Release Charts](https://github.com/promptlylabs/lgtm-helm-chart/actions/workflows/release.yaml/badge.svg)](https://github.com/promptlylabs/lgtm-helm-chart/actions/workflows/release.yaml)
 
-A single place to define a complete observability stack: the [`lgtm`](charts/lgtm/) umbrella chart bundles Loki, Grafana, Tempo, Prometheus and Pyroscope (all single-binary), the OpenTelemetry Operator with three managed collectors, correlated Grafana datasources and OTel-native dashboards — one `helm install` per cluster.
+A single place to define a complete observability stack: the [`lgtm`](charts/lgtm/) umbrella chart bundles Loki, Grafana, Tempo, Prometheus and Pyroscope (all single-binary), the OpenTelemetry Operator with three managed collectors, correlated Grafana datasources, and OTel-native infrastructure plus component self-observability dashboards — one `helm install` per cluster.
 
 ```bash
 helm repo add promptlylabs https://promptlylabs.github.io/lgtm-helm-chart
