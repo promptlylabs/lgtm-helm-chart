@@ -58,6 +58,23 @@
 #   MinIO (in-cluster, plaintext): endpoint: minio.<namespace>.svc:9000
 #                   region: ""   ·   insecure: true
 #
+# ── Private-CA (custom CA) S3 backend ───────────────────────────────────────
+#   For an on-prem S3 whose TLS cert is signed by a PRIVATE CA (e.g. Huawei
+#   OceanStor), keep `insecure: false` and trust the CA instead of disabling
+#   verification (no http_config.tls_config.insecure_skip_verify). Create a Secret
+#   holding the CA bundle (key `ca.crt`), then trust it on BOTH halves of the path:
+#     - Query stack (this chart): thanos.objstore.caCert below — auto-mounts the CA
+#       into Store Gateway + Compactor and sets SSL_CERT_FILE to it.
+#     - Sidecar (operator-owned): kube-prometheus-stack.prometheus.prometheusSpec
+#       .volumes + prometheusSpec.thanos.volumeMounts to mount the same CA, then
+#       reference it from objstore.yml with http_config.tls_config.ca_file (see the
+#       commented block below). This way sidecar + query stack verify TLS
+#       consistently. If you take the ca_file route, add it to objstore.yml under
+#       `config:`, e.g.:
+#             http_config:
+#               tls_config:
+#                 ca_file: /etc/thanos-ca/ca.crt
+#
 # ── Retention note ──────────────────────────────────────────────────────────
 #   Local Prometheus retention is now a rolling cache in front of the bucket. Keep
 #   it >= a few hours so blocks upload before eviction — the chart default (7d) is
@@ -74,6 +91,12 @@ kube-prometheus-stack:
       enabled: true
 
     prometheusSpec:
+      # Private-CA S3 only: mount the CA into the sidecar pod and reference it from
+      # objstore.yml via http_config.tls_config.ca_file (see the banner note above).
+      # volumes:
+      #   - name: objstore-ca
+      #     secret:
+      #       secretName: thanos-objstore-ca
       # Sidecar → object storage. Credentials live in the referenced Secret's
       # objstore.yml (above), never in values.
       thanos:
@@ -83,6 +106,12 @@ kube-prometheus-stack:
           existingSecret:
             name: thanos-objstore
             key: objstore.yml
+        # Private-CA S3 only: mount the CA volume above into the sidecar; then point
+        # objstore.yml's http_config.tls_config.ca_file at /etc/thanos-ca/ca.crt.
+        # volumeMounts:
+        #   - name: objstore-ca
+        #     mountPath: /etc/thanos-ca
+        #     readOnly: true
 
       # The operator already disables local compaction whenever objectStorageConfig
       # is set (so 2h blocks upload before compaction) — set explicitly for clarity.
@@ -97,3 +126,10 @@ thanos:
   enabled: true
   objstore:
     existingSecret: thanos-objstore
+    # Private-CA S3 only (e.g. Huawei OceanStor): trust a custom CA so the objstore
+    # client verifies TLS — no http_config.tls_config.insecure_skip_verify needed.
+    # Auto-mounts the CA + sets SSL_CERT_FILE on Store Gateway + Compactor. Provide
+    # the Secret out of band (e.g. External Secrets Operator).
+    # caCert:
+    #   existingSecret: thanos-objstore-ca   # Secret holding the CA bundle
+    #   key: ca.crt

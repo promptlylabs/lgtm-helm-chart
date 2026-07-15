@@ -65,6 +65,18 @@ spec:
             initialDelaySeconds: 30
           resources:
             {{- toYaml .Values.thanos.query.resources | nindent 12 }}
+          {{- with .Values.thanos.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.thanos.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.thanos.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

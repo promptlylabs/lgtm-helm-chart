@@ -83,8 +83,26 @@ spec:
               readOnly: true
             - name: data
               mountPath: /var/thanos/compact
+            {{- if .Values.thanos.objstore.caCert.existingSecret }}
+            - name: objstore-ca
+              mountPath: /etc/thanos-ca
+              readOnly: true
+            {{- end }}
+            {{- with .Values.thanos.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.thanos.compactor.resources | nindent 12 }}
+          {{- if or .Values.thanos.objstore.caCert.existingSecret .Values.thanos.extraEnv }}
+          env:
+            {{- if .Values.thanos.objstore.caCert.existingSecret }}
+            - name: SSL_CERT_FILE
+              value: /etc/thanos-ca/{{ .Values.thanos.objstore.caCert.key }}
+            {{- end }}
+            {{- with .Values.thanos.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
       volumes:
         - name: objstore
           secret:
@@ -92,6 +110,14 @@ spec:
             items:
               - key: {{ .Values.thanos.objstore.existingSecretKey }}
                 path: objstore.yml
+        {{- if .Values.thanos.objstore.caCert.existingSecret }}
+        - name: objstore-ca
+          secret:
+            secretName: {{ .Values.thanos.objstore.caCert.existingSecret }}
+            items:
+              - key: {{ .Values.thanos.objstore.caCert.key }}
+                path: {{ .Values.thanos.objstore.caCert.key }}
+        {{- end }}
         - name: data
           {{- if .Values.thanos.compactor.persistence.enabled }}
           persistentVolumeClaim:
@@ -99,6 +125,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- with .Values.thanos.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service
