@@ -85,6 +85,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.faro.*` | disabled | Browser telemetry: requires `image` (contrib distro) + `corsAllowedOrigins` |
 | `thanos.enabled` | `false` | Umbrella-owned Thanos query stack (Query/Store Gateway/Compactor) — see [Long-term metrics (Thanos)](#long-term-metrics-thanos) |
 | `thanos.objstore.existingSecret` | `""` | Existing Secret holding the Thanos `objstore.yml` (shared by Store Gateway + Compactor) |
+| `thanos.objstore.caCert.existingSecret` | `""` | Existing Secret with a private/custom CA bundle for the object-store TLS endpoint — mounted read-only into Store Gateway + Compactor with `SSL_CERT_FILE` pointed at it, so an on-prem S3 verifies without `insecure_skip_verify` |
 
 The Thanos **sidecar** itself is a `kube-prometheus-stack.*` pass-through (not an umbrella key); the [`values-thanos.yaml`](examples/values-thanos.yaml) overlay wires both.
 
@@ -114,6 +115,8 @@ Prometheus is storage-only with local retention (ADR-0005), so metrics don't sur
 Start from [`values-thanos.yaml`](examples/values-thanos.yaml) (generic S3 — works with Cloudflare R2, AWS S3, MinIO). It enables the sidecar (`kube-prometheus-stack.prometheus.prometheusSpec.thanos` + `thanosService`) and the umbrella `thanos.*` stack, both referencing one **existing** Secret you provide out of band (e.g. External Secrets Operator): a `thanos-objstore` Secret whose `objstore.yml` key holds the Thanos object-store config. Credentials never go in values.
 
 Object-store notes: `endpoint` is the host only (no scheme, no bucket), `bucket_lookup_type: auto` gives path-style for non-AWS endpoints, and keep `signature_version2: false` (S3 SigV4). For R2 the endpoint is `<account-id>.r2.cloudflarestorage.com` (or `<account-id>.eu.r2.cloudflarestorage.com` for the EU jurisdiction) with `region: auto`.
+
+Private-CA S3 (e.g. an on-prem Huawei OceanStor whose cert is signed by a private CA): set `thanos.objstore.caCert.existingSecret` to a Secret holding the CA bundle — it's mounted read-only into Store Gateway + Compactor and `SSL_CERT_FILE` is pointed at it, so TLS verifies without `http_config.tls_config.insecure_skip_verify`. Cover the sidecar half the same way via `kube-prometheus-stack.prometheus.prometheusSpec.volumes` + `prometheusSpec.thanos.volumeMounts` + an `objstore.yml` `ca_file` (see [`values-thanos.yaml`](examples/values-thanos.yaml)). For anything the built-in knobs don't cover, `thanos.extraVolumes` / `thanos.extraVolumeMounts` / `thanos.extraEnv` are applied to all three components.
 
 Keep local `retention` at least a few hours so blocks upload before eviction — the default 7d is fine, 24h is safe. With sidecar compaction disabled, don't set `retentionSize` so tight that a 2h block is evicted before it uploads (that gaps the bucket): prefer time-based retention. The **Compactor is a singleton** — it compacts, downsamples and enforces the bucket's retention; without it the bucket grows forever.
 

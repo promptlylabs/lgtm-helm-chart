@@ -170,10 +170,21 @@
           "additionalProperties": false,
           "properties": {
             "existingSecret": { "type": "string" },
-            "existingSecretKey": { "type": "string", "minLength": 1 }
+            "existingSecretKey": { "type": "string", "minLength": 1 },
+            "caCert": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "key": { "type": "string", "minLength": 1 }
+              }
+            }
           }
         },
         "sidecarStoreEndpoint": { "type": "string" },
+        "extraVolumes": { "type": "array", "items": { "type": "object" } },
+        "extraVolumeMounts": { "type": "array", "items": { "type": "object" } },
+        "extraEnv": { "type": "array", "items": { "type": "object" } },
         "query": {
           "type": "object",
           "additionalProperties": false,

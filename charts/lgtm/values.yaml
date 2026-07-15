@@ -425,12 +425,29 @@ thanos:
   objstore:
     existingSecret: ""            # e.g. thanos-objstore
     existingSecretKey: objstore.yml
+    # Optional private/custom CA for the object-store TLS endpoint (e.g. an on-prem
+    # S3 whose cert is signed by a private CA). When existingSecret is set, that
+    # Secret's `key` is mounted read-only into Store Gateway + Compactor and
+    # SSL_CERT_FILE is pointed at it, so the objstore client verifies TLS without
+    # http_config.tls_config.insecure_skip_verify. (Query never touches object
+    # storage, so it is not affected.)
+    caCert:
+      existingSecret: ""          # e.g. thanos-objstore-ca
+      key: ca.crt
 
   # StoreAPI endpoint of the Prometheus sidecar, federated by Query alongside the
   # Store Gateway. Empty = computed from kube-prometheus-stack.fullnameOverride as
   # dnssrv+_grpc._tcp.<fullnameOverride>-thanos-discovery.<namespace>.svc.<domain>
   # (the headless Service created by prometheus.thanosService, gRPC 10901).
   sidecarStoreEndpoint: ""
+
+  # Escape hatches applied to ALL three umbrella-owned components (Query, Store
+  # Gateway, Compactor) — e.g. mount a private CA bundle by hand, or inject extra
+  # environment. For the common private-CA case prefer objstore.caCert above, which
+  # wires the mount + SSL_CERT_FILE for you.
+  extraVolumes: []
+  extraVolumeMounts: []
+  extraEnv: []
 
   # Thanos Query — Prometheus-API-compatible endpoint that fans out to the
   # sidecar + Store Gateway and deduplicates. Grafana's Prometheus datasource is
