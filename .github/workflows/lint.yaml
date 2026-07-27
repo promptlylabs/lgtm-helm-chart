@@ -16,7 +16,7 @@ jobs:
         uses: azure/setup-helm@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
 
       - name: Check generated values.yaml is in sync with values.d/
         run: make check-values
