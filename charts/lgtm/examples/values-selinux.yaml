@@ -1,0 +1,60 @@
+# SELinux-enforcing overlay (RKE2 / Rocky / RHEL / AlmaLinux with SELinux in
+# Enforcing mode). Layer this on top of your environment overlay — it is
+# orthogonal to values-baremetal.yaml and can be passed alongside it:
+#
+#   helm upgrade lgtm . -f examples/values-baremetal.yaml -f examples/values-selinux.yaml
+#
+# See "SELinux-enforcing clusters" in the chart README and ADR-0013.
+#
+# The chart's defaults already handle most of Enforcing mode: if you enable the
+# persistent queue it is backed by an emptyDir, which kubelet labels with the pod's
+# own SELinux MCS category and chowns via podSecurityContext.fsGroup — so there is
+# no chown initContainer to be denied. What this overlay adds is the one thing
+# defaults cannot cover: the container-log domain transition. It changes nothing
+# else — no features are turned on here.
+#
+#   Symptom this fixes — the node collector starts but ships no container logs,
+#   and the node's audit log carries:
+#
+#     avc: denied { read } comm="otelcol-k8s" name="pods"
+#       scontext=system_u:system_r:container_t:s0:c...
+#       tcontext=system_u:object_r:container_log_t:s0 tclass=dir
+#
+#   The filelog receiver reads /var/log/pods, which is container_log_t. A confined
+#   container_t process cannot read it. Relabelling /var/log/pods is NOT an option:
+#   kubelet and containerd both expect container_log_t there and will fight you (and
+#   restorecon//policy updates will revert it). The conventional fix for log
+#   collectors on SELinux systems is to run the pod in the unconfined spc_t
+#   ("super privileged container") domain instead.
+#
+#   Set at the POD level so it covers the otc-container and any initContainer.
+#   Note spc_t effectively removes SELinux confinement for this pod — that is the
+#   trade being made, and it is the same one node-exporter/fluentd style log
+#   collectors make. Scope it to the node collector only; the cluster and faro
+#   collectors read no host paths and stay confined.
+
+collectors:
+  node:
+    podSecurityContext:
+      # Restating the chart default. Helm deep-merges maps, so this would be
+      # inherited anyway — it is spelled out because it is load-bearing: fsGroup
+      # is what makes an emptyDir-backed queue writable by the collector (UID
+      # 10001). Don't drop it if you edit this block.
+      fsGroup: 10001
+      seLinuxOptions:
+        type: spc_t
+
+  # NOTE: this overlay deliberately does NOT turn on collectors.persistentQueue —
+  # it is an orthogonal durability feature, and enabling it here would hand a PVC
+  # and a per-node emptyDir to anyone who only wanted the SELinux fix. Enable it
+  # separately (or via values-baremetal.yaml) if you want it.
+  #
+  # If you do enable it, the default emptyDir backing needs nothing extra under
+  # Enforcing: kubelet labels the volume with the pod's own MCS category. But do
+  # NOT switch persistentQueue.node.backend to hostPath without first relabelling
+  # the host directory on every node:
+  #     semanage fcontext -a -t container_file_t '/var/lib/otelcol-queue(/.*)?'
+  #     restorecon -Rv /var/lib/otelcol-queue
+  # otherwise the chown initContainer that backing requires is denied setattr on
+  # container_var_lib_t and the DaemonSet CrashLoopBackOffs. (The spc_t setting
+  # above would also let it through, but the relabel is the cleaner of the two.)

@@ -81,11 +81,17 @@ sizer:items, min_size would count requests, not data points. The sending queue
 and retry_on_failure are on by collector default — pinned here for visibility.
 Include once per real exporter (never the debug exporter) at the exporter's
 sub-key indent, e.g. with nindent 8.
+
+Takes a dict: `root` (the root context) and `storage` (whether this collector
+defines the file_storage/queue extension). Only the node and cluster collectors
+do; faro has no queue volume, so it must pass storage=false or it would name an
+extension that does not exist and fail config validation at startup.
 */}}
 {{- define "lgtm.collector.sendingQueue" -}}
+{{- $root := .root -}}
 sending_queue:
   enabled: true
-  {{- if .Values.collectors.persistentQueue.enabled }}
+  {{- if and $root.Values.collectors.persistentQueue.enabled .storage }}
   # Durable on-disk queue (ADR-0011) — survives collector restarts. The
   # file_storage/queue extension and its volume are defined on each collector.
   storage: file_storage/queue

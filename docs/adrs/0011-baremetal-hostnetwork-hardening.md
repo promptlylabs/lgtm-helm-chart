@@ -4,7 +4,7 @@ type: adr
 title: Bare-metal / hostNetwork hardening for the collectors
 status: accepted
 created: 2026-07-14
-updated: 2026-07-14
+updated: 2026-08-03
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -18,6 +18,7 @@ related:
   see_also:
     - ./0004-single-binary-minimal-footprint.md
     - ./0009-collector-exporter-queue-batching.md
+    - ./0013-collector-queue-backing-priority-and-securitycontext.md
 ---
 
 # ADR-0011 — Bare-metal / hostNetwork hardening for the collectors
@@ -58,6 +59,7 @@ The `values-baremetal.yaml` example overlay turns all three on (and is exercised
 - Operators on conflicting hosts can relocate the internal-telemetry port instead of patching the CR by hand.
 - The internal-telemetry endpoint binds `0.0.0.0:<port>` explicitly. Nothing in the chart scrapes it by default; a user-added scrape (or the operator self-monitor, which targets `8888`) must be pointed at the configured port — documented in the chart README.
 - With `persistentQueue` on, each collector gains a durable volume, a `file_storage/queue` extension and a root `chown` initContainer; the DaemonSet writes one queue dir per node (hostPath), the StatefulSet a per-replica PVC. Enqueue/dequeue now hits disk, and the queue directory must be sized for the worst-case backend-down window.
+  - **Revised by [ADR-0013](./0013-collector-queue-backing-priority-and-securitycontext.md).** The hostPath backing forced the chown initContainer to exist (`fsGroup` is not applied to hostPath volumes) and that initContainer cannot succeed on an SELinux-enforcing node. The node queue now defaults to an `emptyDir` with `podSecurityContext.fsGroup`, hostPath is opt-in via `collectors.persistentQueue.node.backend`, and the cluster collector's initContainer is gone too (`fsGroup` does apply to PVCs).
 - Defaults are unchanged, so existing installs render byte-for-byte the same except for the explicit (default-`8888`) `readers` block.
 
 ## Confidence

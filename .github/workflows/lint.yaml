@@ -90,6 +90,68 @@ jobs:
           echo "$def" | grep -q 'port: 8888'                      || { echo "default internal metrics port should be 8888"; exit 1; }
           echo "bare-metal enabled-path wiring OK"
 
+      # ADR-0013: the queue is backed by an emptyDir and needs no chown
+      # initContainer; hostPath stays available as an opt-in and brings the
+      # initContainer back with it.
+      - name: Helm template (persistent queue backings — assert wiring)
+        run: |
+          ed=$(helm template lgtm charts/lgtm/ --namespace observability --set collectors.persistentQueue.enabled=true --show-only templates/collectors/node-collector.yaml)
+          echo "$ed" | grep -q 'emptyDir'          || { echo "default node queue backing should be emptyDir"; exit 1; }
+          echo "$ed" | grep -q 'sizeLimit: 2Gi'    || { echo "missing emptyDir sizeLimit"; exit 1; }
+          echo "$ed" | grep -q 'queue-permissions' && { echo "emptyDir backing must not need a chown initContainer"; exit 1; }
+          echo "$ed" | grep -q '/var/lib/otelcol-queue' && { echo "emptyDir backing must not mount the hostPath"; exit 1; }
+          hp=$(helm template lgtm charts/lgtm/ --namespace observability --set collectors.persistentQueue.enabled=true --set collectors.persistentQueue.node.backend=hostPath --show-only templates/collectors/node-collector.yaml)
+          echo "$hp" | grep -q 'queue-permissions'      || { echo "hostPath backing needs the chown initContainer"; exit 1; }
+          echo "$hp" | grep -q '/var/lib/otelcol-queue' || { echo "hostPath backing missing host directory"; exit 1; }
+          cl=$(helm template lgtm charts/lgtm/ --namespace observability --set collectors.persistentQueue.enabled=true --show-only templates/collectors/cluster-collector.yaml)
+          echo "$cl" | grep -q 'volumeClaimTemplates' || { echo "cluster queue should be PVC-backed"; exit 1; }
+          echo "$cl" | grep -q 'queue-permissions'    && { echo "fsGroup applies to PVCs on block storage — no chown initContainer by default"; exit 1; }
+          # Escape hatch for CSI drivers that do not apply fsGroup (EFS, Azure Files, NFS).
+          nf=$(helm template lgtm charts/lgtm/ --namespace observability --set collectors.persistentQueue.enabled=true --set collectors.persistentQueue.cluster.chownInitContainer=true --show-only templates/collectors/cluster-collector.yaml)
+          echo "$nf" | grep -q 'queue-permissions'     || { echo "cluster.chownInitContainer=true should render the chown initContainer"; exit 1; }
+          echo "$nf" | grep -q 'volumeClaimTemplates'  || { echo "cluster queue should still be PVC-backed"; exit 1; }
+          echo "persistent queue backings OK"
+
+      # The faro collector has no queue volume, so its exporters must never name
+      # the file_storage extension (it would fail config validation at startup).
+      - name: Helm template (faro + persistent queue — assert no dangling extension)
+        run: |
+          out=$(helm template lgtm charts/lgtm/ --namespace observability \
+            --set collectors.persistentQueue.enabled=true \
+            --set collectors.faro.enabled=true \
+            --set collectors.faro.image=otel/contrib:latest \
+            --set 'collectors.faro.corsAllowedOrigins={https://app.example.com}' \
+            --show-only templates/collectors/faro-collector.yaml)
+          echo "$out" | grep -q 'file_storage' && { echo "faro must not reference file_storage — it defines no such extension"; exit 1; }
+          echo "$out" | grep -q 'sending_queue' || { echo "faro should still batch via sending_queue"; exit 1; }
+          echo "faro sending-queue wiring OK"
+
+      # ADR-0013: collectors are critical by default so kubelet keeps admitting
+      # them while a node carries DiskPressure.
+      - name: Helm template (default PriorityClasses — assert wiring)
+        run: |
+          n=$(helm template lgtm charts/lgtm/ --namespace observability --show-only templates/collectors/node-collector.yaml)
+          echo "$n" | grep -q 'priorityClassName: system-node-critical' || { echo "node collector should default to system-node-critical"; exit 1; }
+          c=$(helm template lgtm charts/lgtm/ --namespace observability --show-only templates/collectors/cluster-collector.yaml)
+          echo "$c" | grep -q 'priorityClassName: system-cluster-critical' || { echo "cluster collector should default to system-cluster-critical"; exit 1; }
+          echo "$n" | grep -q 'fsGroup: 10001' || { echo "node collector should default to fsGroup 10001"; exit 1; }
+          # The removed shared key must fail the values schema, not be ignored.
+          if helm template lgtm charts/lgtm/ --namespace observability --set collectors.priorityClassName=foo > /dev/null 2>&1; then
+            echo "collectors.priorityClassName was removed and must be rejected by the schema"; exit 1
+          fi
+          echo "PriorityClass defaults OK"
+
+      # SELinux overlay: the node collector must transition to spc_t so filelog
+      # can read /var/log/pods (container_log_t) on Enforcing nodes.
+      - name: Helm template (SELinux overlay — assert wiring)
+        run: |
+          out=$(helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-selinux.yaml --show-only templates/collectors/node-collector.yaml)
+          echo "$out" | grep -q 'type: spc_t'   || { echo "missing seLinuxOptions type spc_t"; exit 1; }
+          echo "$out" | grep -q 'fsGroup: 10001' || { echo "SELinux overlay must keep fsGroup"; exit 1; }
+          echo "$out" | grep -q 'queue-permissions' && { echo "SELinux overlay must not render a chown initContainer"; exit 1; }
+          helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-baremetal.yaml -f charts/lgtm/examples/values-selinux.yaml > /dev/null
+          echo "SELinux overlay wiring OK"
+
       - name: Set up kubeconform
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
         env:

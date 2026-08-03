@@ -169,8 +169,14 @@ jobs:
 
       - name: "Phase 2: enable collectors"
         run: |
+          # persistentQueue on: exercises the emptyDir (node) and PVC (cluster)
+          # queue volumes and the fsGroup that replaced the chown initContainer
+          # (ADR-0013). Safe on an upgrade here because phase 1 ran with the
+          # collectors disabled, so both workloads are created fresh — a
+          # StatefulSet's volumeClaimTemplates cannot be added in place.
           helm upgrade lgtm charts/lgtm -n observability \
-            --reuse-values --set collectors.enabled=true
+            --reuse-values --set collectors.enabled=true \
+            --set collectors.persistentQueue.enabled=true
           # The operator creates the workloads asynchronously — wait for them
           # to exist, then for their rollouts.
           for w in daemonset/otel-node-collector-collector statefulset/otel-cluster-collector-collector; do
@@ -181,6 +187,17 @@ jobs:
             kubectl -n observability rollout status $w --timeout=300s
           done
           kubectl -n observability get opentelemetrycollectors
+
+          # ADR-0013: the queue volumes are owned via podSecurityContext.fsGroup,
+          # so neither workload should carry a chown initContainer, and the
+          # built-in critical PriorityClasses must resolve.
+          for w in daemonset/otel-node-collector-collector statefulset/otel-cluster-collector-collector; do
+            init=$(kubectl -n observability get $w -o jsonpath='{.spec.template.spec.initContainers[*].name}')
+            [ -z "$init" ] || { echo "::error::$w unexpectedly has initContainers: $init"; exit 1; }
+            pc=$(kubectl -n observability get $w -o jsonpath='{.spec.template.spec.priorityClassName}')
+            [ -n "$pc" ] || { echo "::error::$w has no priorityClassName"; exit 1; }
+            echo "$w: priorityClass=$pc, no initContainers"
+          done
 
       - name: Assert telemetry flows end to end
         run: |

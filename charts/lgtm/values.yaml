@@ -82,10 +82,6 @@ collectors:
   # uses the operator default (opentelemetry-collector-k8s distribution).
   image: ""
 
-  # PriorityClass for collector pods. Must exist in the cluster — left empty
-  # by default since PriorityClasses are cluster-specific.
-  priorityClassName: ""
-
   # resourcedetection processor for the node collector. Disabled when no
   # detectors are configured. Example for Azure (see examples/values-azure.yaml):
   #   detectors: [azure]
@@ -94,27 +90,83 @@ collectors:
     detectors: []
     config: {}
 
-  # Opt-in durable sending queues (ADR-0011). Backs each exporter's in-memory
-  # sending_queue with a file_storage extension on durable storage, so queued
-  # batches survive a collector restart during a backend-down window. Off by
-  # default (today's in-memory queue). node → hostPath (one dir per node),
-  # cluster → PVC. Both run a chown initContainer so the queue dir is writable
-  # by the collector user (UID 10001) — the collector image is distroless.
+  # Opt-in durable sending queues (ADR-0011, revised by ADR-0013). Backs each
+  # exporter's in-memory sending_queue with a file_storage extension on durable
+  # storage, so queued batches survive a collector restart during a backend-down
+  # window. Off by default (today's in-memory queue). node → emptyDir by default
+  # (see node.backend), cluster → PVC. Neither needs a chown initContainer:
+  # kubelet applies podSecurityContext.fsGroup to both volume kinds.
   persistentQueue:
     enabled: false
     # Image for the chown initContainer; must provide `chown` (the collector
-    # image has no shell). Pinned/tracked like any other image.
+    # image is distroless and has no shell). Pinned/tracked like any other image.
+    # ONLY used when node.backend=hostPath — every other path relies on fsGroup.
     initImage: busybox:1.37
     node:
-      # Host directory backing the DaemonSet queue (created if missing).
+      # What backs the DaemonSet queue:
+      #   emptyDir (default) — kubelet applies podSecurityContext.fsGroup and the
+      #     container runtime labels the volume with the pod's own SELinux MCS
+      #     label, so no chown initContainer and nothing to relabel on
+      #     SELinux-enforcing nodes. It also counts toward the pod's ephemeral
+      #     storage, so kubelet can see and bound it (see sizeLimit) instead of
+      #     the queue growing invisibly on the host. NOTE: it lives under the
+      #     kubelet root dir (/var/lib/kubelet by default), which on a stock node
+      #     layout is the SAME filesystem as a /var/lib hostPath — it only lands
+      #     elsewhere if that directory is a separate mount. Survives container
+      #     restarts (the ADR-0011 use case) but not pod recreation.
+      #   hostPath — also survives pod deletion/rescheduling, at the cost of a
+      #     root chown initContainer. fsGroup does NOT apply to hostPath volumes,
+      #     which is the only reason that initContainer exists. On
+      #     SELinux-enforcing nodes it additionally needs the host directory
+      #     relabelled (semanage fcontext + restorecon) or the collector run as
+      #     spc_t — see "SELinux-enforcing clusters" in the chart README.
+      backend: emptyDir
+      # emptyDir backing only. Kubelet evicts the pod if the queue exceeds this,
+      # so size it for the worst-case backend-down window; empty means unbounded
+      # (bounded in practice by the exporters' sending_queue depth).
+      sizeLimit: 2Gi
+      # hostPath backing only: host directory backing the queue (created if missing).
       hostPath: /var/lib/otelcol-queue
     cluster:
       # PVC for the StatefulSet queue.
       size: 2Gi
       storageClassName: ""   # empty uses the cluster default StorageClass
+      # Run the root chown initContainer on this collector. Not needed on block
+      # storage: kubelet applies podSecurityContext.fsGroup to the PVC. Set true
+      # for storage classes whose CSI driver does NOT apply fsGroup — file/NFS
+      # backed drivers (EFS, Azure Files, nfs-subdir-provisioner) declare
+      # CSIDriver fsGroupPolicy: None, and the default ReadWriteOnceWithFSType
+      # skips volumes with no fsType. Symptom: the collector starts and cannot
+      # write /var/lib/otelcol/queue because it is still root-owned.
+      chownInitContainer: false
 
   node:
     enabled: true
+    # PriorityClass for the DaemonSet. system-node-critical is built into every
+    # cluster (no cluster-specific object to create) and puts this node agent in
+    # the same category as the CNI/CSI DaemonSets. It matters beyond scheduling
+    # order: kubelet's admission handler rejects non-critical pods while a node
+    # carries the DiskPressure condition, and "critical" is defined precisely as
+    # carrying system-node-critical or system-cluster-critical — so without this
+    # the collectors get evicted exactly when you need the telemetry. Set to ""
+    # to opt out. Note the target-allocator Deployment is a separate pod and the
+    # operator's CRD has no priorityClassName for it, so it stays non-critical.
+    priorityClassName: system-node-critical
+    # Pod-level security context. fsGroup lets kubelet set ownership on the
+    # emptyDir-backed queue (and the config/SA-token volumes) so the collector
+    # (UID 10001, distroless image) can write it — this is what replaces the old
+    # chown initContainer. It does NOT touch the hostPath mounts (/hostfs,
+    # /var/log/pods): fsGroup only applies to emptyDir, configMap, secret,
+    # projected, downwardAPI and PVC volumes.
+    # On SELinux-enforcing nodes the filelog receiver also needs a domain allowed
+    # to read /var/log/pods (container_log_t), e.g.
+    #   seLinuxOptions: { type: spc_t }
+    # See "SELinux-enforcing clusters" in the chart README and examples/values-selinux.yaml.
+    podSecurityContext:
+      fsGroup: 10001
+    # Container-level security context for the otc-container (capabilities,
+    # readOnlyRootFilesystem, seLinuxOptions, …). Empty renders nothing.
+    securityContext: {}
     # Collect node network IO/error metrics from ALL interfaces, not just the
     # default (eth0). On multi-NIC bare-metal nodes with no default interface the
     # kubelet reports an empty interface name and kubeletstats emits no
@@ -143,6 +195,15 @@ collectors:
 
   cluster:
     enabled: true
+    # Cluster-scoped singleton (k8s_cluster + k8s_events), not a node agent —
+    # system-cluster-critical rather than system-node-critical. Also built into
+    # every cluster; see collectors.node.priorityClassName for why it matters.
+    priorityClassName: system-cluster-critical
+    # fsGroup applies to the persistentQueue PVC (volumeClaimTemplates), so no
+    # chown initContainer is needed there either. See collectors.node.podSecurityContext.
+    podSecurityContext:
+      fsGroup: 10001
+    securityContext: {}
     resources:
       limits:
         memory: 384Mi
@@ -152,6 +213,13 @@ collectors:
 
   faro:
     enabled: false
+    # Browser telemetry is an optional, non-infrastructural path — left empty so
+    # it doesn't claim critical priority. Set one if your cluster has a suitable
+    # PriorityClass.
+    priorityClassName: ""
+    # No queue volume on this collector, so no fsGroup is needed by default.
+    podSecurityContext: {}
+    securityContext: {}
     # REQUIRED when enabled: the faroreceiver is only in the contrib
     # distribution, e.g.
     # ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:<tag>
