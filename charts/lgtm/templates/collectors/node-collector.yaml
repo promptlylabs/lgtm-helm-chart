@@ -28,8 +28,22 @@ spec:
   image: {{ . }}
   {{- end }}
 
-  {{- with .Values.collectors.priorityClassName }}
+  # system-node-critical by default (ADR-0013): kubelet only admits critical pods
+  # while a node carries DiskPressure, so the node agent survives the incidents
+  # it exists to report on. The target allocator below is a separate Deployment
+  # and the operator CRD exposes no priorityClassName for it.
+  {{- with .Values.collectors.node.priorityClassName }}
   priorityClassName: {{ . }}
+  {{- end }}
+
+  {{- with .Values.collectors.node.podSecurityContext }}
+  podSecurityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.collectors.node.securityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
   {{- end }}
 
   # Target Allocator — per-node strategy: each DaemonSet pod scrapes only
@@ -66,8 +80,9 @@ spec:
     {{- if .Values.collectors.persistentQueue.enabled }}
     extensions:
       # Durable on-disk queue backing the exporter sending queues (ADR-0011).
-      # Mounted from a hostPath volume; writable by the collector via the
-      # queue-permissions initContainer.
+      # Mounted from an emptyDir by default (hostPath opt-in, see
+      # collectors.persistentQueue.node.backend); writable by the collector
+      # because podSecurityContext.fsGroup makes kubelet set ownership.
       file_storage/queue:
         directory: /var/lib/otelcol/queue
     {{- end }}
@@ -304,18 +319,18 @@ spec:
       # Prometheus native OTLP ingestion (HTTP, not gRPC)
       otlp_http/metrics:
         metrics_endpoint: {{ include "lgtm.prometheus.otlpEndpoint" . }}/v1/metrics
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" true) | nindent 8 }}
 
       # Loki native OTLP ingestion
       otlp_http/loki:
         endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" true) | nindent 8 }}
 
       otlp_grpc/tempo:
         endpoint: {{ include "lgtm.tempo.otlpGrpcEndpoint" . }}
         tls:
           insecure: true
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" true) | nindent 8 }}
 
       debug:
         verbosity: basic
@@ -371,9 +386,13 @@ spec:
   # Host network for accurate node metrics
   hostNetwork: true
 
-  {{- if .Values.collectors.persistentQueue.enabled }}
-  # file_storage runs as the collector user (UID 10001); make the hostPath queue
-  # dir writable before the collector starts (the collector image is distroless).
+  {{- if and .Values.collectors.persistentQueue.enabled (eq .Values.collectors.persistentQueue.node.backend "hostPath") }}
+  # hostPath backing only. fsGroup is not applied to hostPath volumes, so the
+  # queue dir has to be chowned to the collector user (UID 10001) before the
+  # collector starts — the collector image is distroless and has no shell.
+  # On SELinux-enforcing nodes this chown is denied unless the host directory is
+  # relabelled or the pod runs as spc_t; the default emptyDir backing avoids the
+  # whole problem (ADR-0013).
   initContainers:
     - name: queue-permissions
       image: {{ .Values.collectors.persistentQueue.initImage }}
@@ -395,9 +414,18 @@ spec:
         path: /var/log/pods
     {{- if .Values.collectors.persistentQueue.enabled }}
     - name: queue
+      {{- if eq .Values.collectors.persistentQueue.node.backend "hostPath" }}
       hostPath:
         path: {{ .Values.collectors.persistentQueue.node.hostPath }}
         type: DirectoryOrCreate
+      {{- else }}
+      {{- with .Values.collectors.persistentQueue.node.sizeLimit }}
+      emptyDir:
+        sizeLimit: {{ . }}
+      {{- else }}
+      emptyDir: {}
+      {{- end }}
+      {{- end }}
     {{- end }}
 
   volumeMounts:

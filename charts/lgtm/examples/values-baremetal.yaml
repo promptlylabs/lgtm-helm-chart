@@ -27,7 +27,17 @@ lgtm:
 
 collectors:
   # Durable sending queues so queued batches survive a collector restart during
-  # a backend-down window (node → hostPath, cluster → PVC). Off by default.
+  # a backend-down window (node → emptyDir by default, cluster → PVC). Off by
+  # default. Set persistentQueue.node.backend=hostPath if the queue also needs to
+  # survive pod recreation — that path needs a root chown initContainer, and on
+  # SELinux-enforcing nodes the host directory must be relabelled first
+  # (see examples/values-selinux.yaml).
+  #
+  # UPGRADING FROM < 0.12.0 with this overlay: the node queue was a hostPath at
+  # /var/lib/otelcol-queue and moves to an emptyDir here without any values change
+  # on your side. Anything still queued there is abandoned, and the directory is
+  # left behind on every node — clean it up once you're sure you don't need it.
+  # Set persistentQueue.node.backend=hostPath to stay on the old behaviour.
   persistentQueue:
     enabled: true
   node:

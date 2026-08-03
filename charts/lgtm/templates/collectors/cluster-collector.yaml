@@ -30,8 +30,22 @@ spec:
   image: {{ . }}
   {{- end }}
 
-  {{- with .Values.collectors.priorityClassName }}
+  # system-cluster-critical by default (ADR-0013) — a cluster-scoped singleton,
+  # not a node agent. Critical pods are the only ones kubelet admits while a node
+  # carries DiskPressure. The target allocator below is a separate Deployment and
+  # the operator CRD exposes no priorityClassName for it.
+  {{- with .Values.collectors.cluster.priorityClassName }}
   priorityClassName: {{ . }}
+  {{- end }}
+
+  {{- with .Values.collectors.cluster.podSecurityContext }}
+  podSecurityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.collectors.cluster.securityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
   {{- end }}
 
   targetAllocator:
@@ -57,8 +71,8 @@ spec:
     {{- if .Values.collectors.persistentQueue.enabled }}
     extensions:
       # Durable on-disk queue backing the exporter sending queues (ADR-0011).
-      # Mounted from a PVC (volumeClaimTemplates); writable by the collector via
-      # the queue-permissions initContainer.
+      # Mounted from a PVC (volumeClaimTemplates); writable by the collector
+      # because podSecurityContext.fsGroup makes kubelet set ownership.
       file_storage/queue:
         directory: /var/lib/otelcol/queue
     {{- end }}
@@ -147,12 +161,12 @@ spec:
       # Prometheus native OTLP ingestion (HTTP, not gRPC)
       otlp_http/metrics:
         metrics_endpoint: {{ include "lgtm.prometheus.otlpEndpoint" . }}/v1/metrics
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" true) | nindent 8 }}
 
       # Loki native OTLP ingestion
       otlp_http/loki:
         endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" true) | nindent 8 }}
 
       debug:
         verbosity: basic
@@ -180,8 +194,11 @@ spec:
           exporters: [otlp_http/loki]
 
   {{- if .Values.collectors.persistentQueue.enabled }}
-  # file_storage runs as the collector user (UID 10001); make the PVC-backed
-  # queue dir writable before the collector starts (distroless image).
+  {{- if .Values.collectors.persistentQueue.cluster.chownInitContainer }}
+  # Escape hatch for storage classes whose CSI driver does not apply fsGroup
+  # (file/NFS-backed drivers report fsGroupPolicy: None, and the default
+  # ReadWriteOnceWithFSType skips volumes with no fsType). Without it the queue
+  # dir stays root-owned and the collector (UID 10001, distroless) cannot write.
   initContainers:
     - name: queue-permissions
       image: {{ .Values.collectors.persistentQueue.initImage }}
@@ -192,6 +209,10 @@ spec:
       volumeMounts:
         - name: queue
           mountPath: /var/lib/otelcol/queue
+  {{- end }}
+  # file_storage runs as the collector user (UID 10001). On block storage kubelet
+  # applies podSecurityContext.fsGroup to the PVC, so no chown is needed
+  # (ADR-0013); see cluster.chownInitContainer for the exceptions.
   volumeClaimTemplates:
     - metadata:
         name: queue

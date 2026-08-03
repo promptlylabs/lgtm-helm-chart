@@ -63,6 +63,14 @@ helm upgrade lgtm promptlylabs/lgtm -n observability \
 
 Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, `kube-prometheus-stack.*`, …) — see each upstream chart's documentation. The umbrella's own keys:
 
+> **Breaking in 0.12.0** (ADR-0013) — three changes:
+>
+> - The shared `collectors.priorityClassName` key is replaced by per-collector `collectors.node.priorityClassName` / `.cluster.` / `.faro.`, and the node and cluster collectors now default to `system-node-critical` / `system-cluster-critical`. The values schema rejects the old key, so an upgrade that still sets it fails immediately rather than silently ignoring it.
+> - The node collector's persistent queue moved from `hostPath` to `emptyDir` by default. **This affects every install running `collectors.persistentQueue.enabled: true`, whether or not you ever set `collectors.persistentQueue.node.hostPath`** — the key has a working default (`/var/lib/otelcol-queue`), so hostPath is what you were already getting, and [`values-baremetal.yaml`](examples/values-baremetal.yaml) enables the queue without naming it. This is the one change here that does *not* fail loudly. Two consequences on upgrade:
+>   - The queue silently moves to an `emptyDir`. Add `collectors.persistentQueue.node.backend: hostPath` to keep the previous behaviour.
+>   - Anything still queued in the old directory is abandoned — undelivered batches there are never drained — and `/var/lib/otelcol-queue` is **left behind on every node**, consuming disk until you remove it. Once you're satisfied nothing in it is needed, clean it up across the fleet (e.g. `rm -rf /var/lib/otelcol-queue`); on SELinux hosts also drop any `semanage fcontext` rule you added for it.
+> - The `queue-permissions` chown initContainer no longer renders by default on either collector (`podSecurityContext.fsGroup` replaces it). **If the cluster collector's queue PVC is on file/NFS-backed storage** (EFS, Azure Files, `nfs-subdir-provisioner` — any CSI driver that doesn't apply `fsGroup`), set `collectors.persistentQueue.cluster.chownInitContainer: true` to restore it, or the collector will not be able to write the queue directory.
+
 | Key | Default | Purpose |
 |---|---|---|
 | `lgtm.clusterName` | `""` | Added as the `cluster` resource attribute on all telemetry |
@@ -75,9 +83,13 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `lgtm.metaMonitoring.enabled` | `false` | Reserve the observability stack's own `scope: observability` ServiceMonitors for a separate meta-monitoring stack; default `false` scrapes them in-cluster |
 | `collectors.enabled` | `true` | Master switch for all collector CRs |
 | `collectors.image` | `""` | Override the collector image (node + cluster) |
-| `collectors.priorityClassName` | `""` | PriorityClass for collector pods (must exist) |
 | `collectors.resourceDetection.detectors` | `[]` | resourcedetection processor detectors (e.g. `[azure]`) |
-| `collectors.persistentQueue.enabled` | `false` | Back exporter sending queues with a `file_storage` extension on durable storage (node → hostPath, cluster → PVC) so queued batches survive a restart. See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
+| `collectors.persistentQueue.enabled` | `false` | Back exporter sending queues with a `file_storage` extension on durable storage (node → emptyDir, cluster → PVC) so queued batches survive a restart. See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
+| `collectors.persistentQueue.node.backend` | `emptyDir` | What backs the DaemonSet queue: `emptyDir` (no chown initContainer, SELinux-safe, bounded by `sizeLimit`) or `hostPath` (also survives pod recreation). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
+| `collectors.persistentQueue.cluster.chownInitContainer` | `false` | Run the root chown initContainer on the cluster collector. Needed only on storage classes whose CSI driver does not apply `fsGroup` (file/NFS-backed: EFS, Azure Files, `nfs-subdir-provisioner`) |
+| `collectors.<node\|cluster\|faro>.priorityClassName` | `system-node-critical` / `system-cluster-critical` / `""` | PriorityClass per collector. The two `system-*` classes are built into every cluster and are what makes kubelet keep admitting the pod under `DiskPressure` — set to `""` to opt out |
+| `collectors.<node\|cluster\|faro>.podSecurityContext` | `fsGroup: 10001` (node, cluster) / `{}` (faro) | Pod security context. `fsGroup` is what makes the queue volume writable; add `seLinuxOptions` here on Enforcing clusters — see [SELinux-enforcing clusters](#selinux-enforcing-clusters) |
+| `collectors.<node\|cluster\|faro>.securityContext` | `{}` | Container security context for the `otc-container` |
 | `collectors.node.*` | enabled | DaemonSet collector: resources, tolerations |
 | `collectors.node.collectAllNetworkInterfaces` | `false` | Collect node network metrics from **all** NICs, not just the default — needed on multi-NIC bare-metal nodes with no default interface (adds an `interface` attribute). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.node.internalMetricsPort` | `8888` | Host port for the node collector's own internal-telemetry metrics endpoint (the DaemonSet is hostNetwork). Move it if `:8888` is taken on the host |
@@ -106,7 +118,54 @@ The node collector is a `hostNetwork` DaemonSet (ADR-0005). On multi-NIC bare-me
 
 - **`collectors.node.collectAllNetworkInterfaces`** — when a node has several NICs and no default interface, the kubelet reports an empty interface name and the kubeletstats receiver emits **no** `k8s.node.network.io` at all ([contrib #40915](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/40915)). Setting this to `true` collects from every interface and adds an `interface` resource attribute — one series per node NIC, so cardinality stays bounded. The shipped **OTel Network** dashboard aggregates node network metrics with `sum`, so it renders unchanged with the extra label.
 - **`collectors.node.internalMetricsPort`** — because the DaemonSet shares the host network, the collector's own internal-telemetry endpoint binds a host port. On distros where `:8888` is already bound the collector crashes with `bind: address already in use`; set a free port. It is rendered via `service.telemetry.metrics.readers` (the `service.telemetry.metrics.address` shortcut was removed in collector v0.111+). **Caveat:** nothing in this chart scrapes the internal-telemetry endpoint by default. If you add a scrape for it — or enable the operator self-monitor via `spec.observability.metrics`, which targets `8888` — point it at the port you set here.
-- **`collectors.persistentQueue.enabled`** — by default the exporter sending queues are in-memory (ADR-0009), so a collector restart during a backend-down window drops queued batches. Setting this to `true` backs each queue with a `file_storage` extension on durable storage — a per-node hostPath for the DaemonSet (`collectors.persistentQueue.node.hostPath`), a per-replica PVC for the StatefulSet (`collectors.persistentQueue.cluster.size` / `.storageClassName`). A small `chown` initContainer (`collectors.persistentQueue.initImage`) makes the queue dir writable by the collector (UID 10001), since the collector image is distroless. Useful anywhere, but most valuable on on-prem clusters with a less reliable link to the backends.
+- **`collectors.persistentQueue.enabled`** — by default the exporter sending queues are in-memory (ADR-0009), so a collector restart during a backend-down window drops queued batches. Setting this to `true` backs each queue with a `file_storage` extension on durable storage — an `emptyDir` for the DaemonSet, a per-replica PVC for the StatefulSet (`collectors.persistentQueue.cluster.size` / `.storageClassName`). Neither normally needs a `chown` initContainer: `podSecurityContext.fsGroup` makes kubelet set ownership for the collector user (UID 10001), which matters because the collector image is distroless. Useful anywhere, but most valuable on on-prem clusters with a less reliable link to the backends.
+- **`collectors.persistentQueue.node.backend`** — `emptyDir` (default) or `hostPath` (ADR-0013). `emptyDir` survives container restarts, which is the case the durable queue exists for; kubelet applies `fsGroup` to it and the container runtime labels it with the pod's own SELinux category, so it needs no initContainer and works unchanged on Enforcing nodes. It also counts toward the pod's ephemeral storage, so kubelet can account for and bound it (`collectors.persistentQueue.node.sizeLimit`, default `2Gi` — kubelet evicts the pod if it is exceeded, so size it for your worst-case backend-down window) rather than the queue growing invisibly on the host. Note it lives under the kubelet root directory (`/var/lib/kubelet` by default), which on a stock node layout is the **same filesystem** as a `/var/lib` hostPath — it only lands elsewhere if that directory is a separate mount. Switch to `hostPath` (`collectors.persistentQueue.node.hostPath`) only if the queue must also survive **pod** recreation, e.g. a chart upgrade: `fsGroup` is not applied to hostPath volumes, so that path pulls in a root `chown` initContainer (`collectors.persistentQueue.initImage`), and on SELinux-enforcing nodes the host directory must be relabelled first — see [SELinux-enforcing clusters](#selinux-enforcing-clusters).
+- **`collectors.persistentQueue.cluster.chownInitContainer`** — `false` by default, because kubelet applies `fsGroup` to PVCs on block storage. Set it to `true` for storage classes whose CSI driver does **not** apply `fsGroup`: file/NFS-backed drivers (EFS, Azure Files, `nfs-subdir-provisioner`) declare `CSIDriver.fsGroupPolicy: None`, and the default `ReadWriteOnceWithFSType` policy skips volumes with no `fsType`. Symptom if you need it and don't set it: the cluster collector starts but cannot write `/var/lib/otelcol/queue`, which stays root-owned.
+
+Two related notes on the **PriorityClasses** (`collectors.node.priorityClassName` = `system-node-critical`, `collectors.cluster.priorityClassName` = `system-cluster-critical` by default): kubelet's admission handler rejects non-critical pods while a node carries the `DiskPressure` condition, and "critical" means exactly one of those two built-in classes — so the defaults are what keep the collectors running through the incidents you most want telemetry for. Be aware they also let the collector **preempt** lower-priority workloads on a full node. The target-allocator Deployments are separate pods and the operator's CRD exposes no `priorityClassName` for them, so they remain evictable.
+
+### SELinux-enforcing clusters
+
+On distros that run SELinux in **Enforcing** mode (RKE2 on Rocky/RHEL/AlmaLinux and similar), the node collector needs one extra setting. Start from [`values-selinux.yaml`](examples/values-selinux.yaml), which layers on top of any environment overlay:
+
+```bash
+helm upgrade lgtm . -f examples/values-baremetal.yaml -f examples/values-selinux.yaml
+```
+
+**Container logs.** The `filelog` receiver reads `/var/log/pods`, which is labelled `container_log_t`. A confined `container_t` process cannot read it, so the collector starts, reports healthy, and silently ships no container logs while the node's audit log fills with:
+
+```
+avc: denied { read } comm="otelcol-k8s" name="pods"
+  scontext=system_u:system_r:container_t:s0:c... tcontext=system_u:object_r:container_log_t:s0 tclass=dir
+```
+
+Relabelling `/var/log/pods` is **not** a fix — kubelet and containerd both expect `container_log_t` there, and policy reloads/`restorecon` will revert it. Run the collector in the unconfined `spc_t` domain instead, the convention for log collectors on SELinux systems:
+
+```yaml
+collectors:
+  node:
+    podSecurityContext:
+      fsGroup: 10001          # keep this — it is what makes the queue volume writable
+      seLinuxOptions:
+        type: spc_t
+```
+
+Set it at the **pod** level so it covers the `otc-container` and any initContainer. Note that `spc_t` effectively removes SELinux confinement for this pod; scope it to the node collector, which is the only one reading host paths. `collectors.<collector>.securityContext` takes the same `seLinuxOptions` at container level if you want narrower scope.
+
+**The persistent queue needs nothing extra** on the default `emptyDir` backing — kubelet applies `fsGroup` and the runtime labels the volume with the pod's own MCS category. If you opt into `collectors.persistentQueue.node.backend=hostPath`, relabel the directory on every node first:
+
+```bash
+semanage fcontext -a -t container_file_t '/var/lib/otelcol-queue(/.*)?'
+restorecon -Rv /var/lib/otelcol-queue
+```
+
+Without it, the `chown` initContainer that the hostPath backing requires is denied `setattr` on `container_var_lib_t` and the DaemonSet goes into `CrashLoopBackOff` — it runs as root, so this is SELinux rather than file permissions:
+
+```
+avc: denied { setattr } scontext=...:container_t tcontext=...:container_var_lib_t
+```
+
+Nodes left in Permissive mode will mask all of the above until they are rebooted or set back to Enforcing.
 
 ### Long-term metrics (Thanos)
 

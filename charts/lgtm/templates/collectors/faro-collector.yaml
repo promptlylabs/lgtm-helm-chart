@@ -28,10 +28,26 @@ spec:
 
   image: {{ required "collectors.faro.image is required when the faro collector is enabled (faroreceiver needs the contrib distribution)" .Values.collectors.faro.image }}
 
-  {{- with .Values.collectors.priorityClassName }}
+  {{- with .Values.collectors.faro.priorityClassName }}
   priorityClassName: {{ . }}
   {{- end }}
 
+  {{- with .Values.collectors.faro.podSecurityContext }}
+  podSecurityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.collectors.faro.securityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- /*
+  No persistentQueue on this collector: it has no queue volume, so its exporters
+  pass storage=false to the sendingQueue helper. Passing true would name a
+  file_storage extension that is not defined here, and the collector would fail
+  config validation at startup.
+  */}}
   config:
     receivers:
       faro:
@@ -69,13 +85,13 @@ spec:
     exporters:
       otlp_http/loki:
         endpoint: {{ include "lgtm.loki.otlpEndpoint" . }}
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" false) | nindent 8 }}
 
       otlp_grpc/tempo:
         endpoint: {{ include "lgtm.tempo.otlpGrpcEndpoint" . }}
         tls:
           insecure: true
-        {{- include "lgtm.collector.sendingQueue" . | nindent 8 }}
+        {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" false) | nindent 8 }}
 
     service:
       pipelines:
