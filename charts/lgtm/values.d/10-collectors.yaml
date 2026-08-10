@@ -109,6 +109,16 @@ collectors:
     # collector 0.131 (#38737). Adds an `interface` resource attribute — one
     # series per node NIC, so cardinality stays bounded.
     collectAllNetworkInterfaces: false
+    # Skip TLS verification when the kubeletstats receiver scrapes the kubelet
+    # on :10250. Default true: most kubelets serve a self-signed serving cert
+    # that no CA available to the pod can verify. Set false where kubelet
+    # serving certs are signed by the cluster CA — auth_type: serviceAccount
+    # then verifies against the pod's service-account CA bundle, which is that
+    # same CA, with no extra configuration. On Talos that means
+    # machine.kubelet.extraArgs.rotate-server-certificates: true plus a CSR
+    # approver, since kube-controller-manager never auto-approves
+    # kubernetes.io/kubelet-serving CSRs.
+    kubeletInsecureSkipVerify: true
     # Port for the collector's own internal telemetry metrics endpoint. The node
     # collector runs hostNetwork, so this binds a host port; on bare-metal distros
     # where :8888 is already taken, set a free port to avoid

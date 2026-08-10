@@ -108,6 +108,7 @@
             "podSecurityContext": { "type": "object" },
             "securityContext": { "type": "object" },
             "collectAllNetworkInterfaces": { "type": "boolean" },
+            "kubeletInsecureSkipVerify": { "type": "boolean" },
             "internalMetricsPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "resources": { "type": "object" },
             "tolerations": {
