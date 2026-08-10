@@ -90,6 +90,17 @@ jobs:
           echo "$def" | grep -q 'port: 8888'                      || { echo "default internal metrics port should be 8888"; exit 1; }
           echo "bare-metal enabled-path wiring OK"
 
+      # Kubelet TLS: the skip stays ON by default (kubelets normally serve
+      # self-signed certs) and can be turned off where kubelet serving certs
+      # are signed by the cluster CA.
+      - name: Helm template (kubelet TLS verification — assert both ways)
+        run: |
+          def=$(helm template lgtm charts/lgtm/ --namespace observability --show-only templates/collectors/node-collector.yaml)
+          echo "$def" | grep -q 'insecure_skip_verify: true'  || { echo "kubelet skip-verify must default to true"; exit 1; }
+          off=$(helm template lgtm charts/lgtm/ --namespace observability --set collectors.node.kubeletInsecureSkipVerify=false --show-only templates/collectors/node-collector.yaml)
+          echo "$off" | grep -q 'insecure_skip_verify: false' || { echo "kubeletInsecureSkipVerify=false must render insecure_skip_verify: false"; exit 1; }
+          echo "kubelet TLS wiring OK"
+
       # ADR-0013: the queue is backed by an emptyDir and needs no chown
       # initContainer; hostPath stays available as an opt-in and brings the
       # initContainer back with it.

@@ -92,6 +92,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.<node\|cluster\|faro>.securityContext` | `{}` | Container security context for the `otc-container` |
 | `collectors.node.*` | enabled | DaemonSet collector: resources, tolerations |
 | `collectors.node.collectAllNetworkInterfaces` | `false` | Collect node network metrics from **all** NICs, not just the default — needed on multi-NIC bare-metal nodes with no default interface (adds an `interface` attribute). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
+| `collectors.node.kubeletInsecureSkipVerify` | `true` | Skip TLS verification when the node collector scrapes the kubelet on `:10250`. Set `false` only where kubelet serving certs are signed by the cluster CA — see [Kubelet TLS verification](#kubelet-tls-verification) |
 | `collectors.node.internalMetricsPort` | `8888` | Host port for the node collector's own internal-telemetry metrics endpoint (the DaemonSet is hostNetwork). Move it if `:8888` is taken on the host |
 | `collectors.cluster.*` | enabled | Cluster collector: resources |
 | `collectors.faro.*` | disabled | Browser telemetry: requires `image` (contrib distro) + `corsAllowedOrigins` |
@@ -123,6 +124,17 @@ The node collector is a `hostNetwork` DaemonSet (ADR-0005). On multi-NIC bare-me
 - **`collectors.persistentQueue.cluster.chownInitContainer`** — `false` by default, because kubelet applies `fsGroup` to PVCs on block storage. Set it to `true` for storage classes whose CSI driver does **not** apply `fsGroup`: file/NFS-backed drivers (EFS, Azure Files, `nfs-subdir-provisioner`) declare `CSIDriver.fsGroupPolicy: None`, and the default `ReadWriteOnceWithFSType` policy skips volumes with no `fsType`. Symptom if you need it and don't set it: the cluster collector starts but cannot write `/var/lib/otelcol/queue`, which stays root-owned.
 
 Two related notes on the **PriorityClasses** (`collectors.node.priorityClassName` = `system-node-critical`, `collectors.cluster.priorityClassName` = `system-cluster-critical` by default): kubelet's admission handler rejects non-critical pods while a node carries the `DiskPressure` condition, and "critical" means exactly one of those two built-in classes — so the defaults are what keep the collectors running through the incidents you most want telemetry for. Be aware they also let the collector **preempt** lower-priority workloads on a full node. The target-allocator Deployments are separate pods and the operator's CRD exposes no `priorityClassName` for them, so they remain evictable.
+
+### Kubelet TLS verification
+
+The node collector's `kubeletstats` receiver scrapes each kubelet over HTTPS on `:10250` with `auth_type: serviceAccount`, and the chart sets `insecure_skip_verify: true` on it by default (`collectors.node.kubeletInsecureSkipVerify`). The reason is that most kubelets serve a **self-signed** serving certificate, which no CA available to the pod can verify. Because this receiver is the chart's only source of kubelet metrics — the kubelet ServiceMonitor is disabled (ADR-0005) — verifying against a self-signed cert would fail every scrape with `x509: certificate signed by unknown authority` and take `k8s.pod.*`, `k8s.node.*` and `container.*` with it. The default is therefore left on, and this knob is a no-op for installs that don't touch it.
+
+Set it to `false` when kubelet serving certificates are signed by the **cluster CA**. `auth_type: serviceAccount` already makes the receiver verify against the pod's projected service-account bundle (`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`) — the same CA — so verification then succeeds with nothing else to configure in this chart. Two things have to be true in the cluster first:
+
+- **Kubelets must request serving certificates from the cluster CA** instead of self-signing. On [Talos](https://www.talos.dev/), set `machine.kubelet.extraArgs.rotate-server-certificates: true`; on kubeadm clusters, `serverTLSBootstrap: true` in the `KubeletConfiguration`.
+- **Something must approve the resulting CSRs.** `kube-controller-manager` never auto-approves `kubernetes.io/kubelet-serving` requests, so they need an approver such as [kubelet-serving-cert-approver](https://github.com/alex1989hu/kubelet-serving-cert-approver) or [kubelet-csr-approver](https://github.com/postfinance/kubelet-csr-approver). Without one the CSRs sit `Pending`, the kubelet keeps its self-signed certificate, and scrapes start failing the moment you turn the skip off.
+
+Check both before flipping it — `kubectl get csr` should show `kubernetes.io/kubelet-serving` requests in `Approved,Issued`, not `Pending`. If node metrics disappear after the change, the node collector logs the `x509` error per scrape; setting the value back to `true` restores them immediately.
 
 ### SELinux-enforcing clusters
 

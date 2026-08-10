@@ -141,7 +141,12 @@ spec:
         collection_interval: 30s
         auth_type: serviceAccount
         endpoint: "https://${env:K8S_NODE_NAME}:10250"
-        insecure_skip_verify: true  # kubelets use self-signed certs
+        # true (default) fits kubelets serving self-signed certs, which nothing
+        # in the pod can verify. Set collectors.node.kubeletInsecureSkipVerify
+        # to false where kubelet serving certs are signed by the cluster CA —
+        # auth_type: serviceAccount then verifies against the pod's
+        # service-account CA bundle, which is that same CA.
+        insecure_skip_verify: {{ .Values.collectors.node.kubeletInsecureSkipVerify }}
         {{- if .Values.collectors.node.collectAllNetworkInterfaces }}
         # Multi-NIC nodes: collect network metrics from every interface, not just
         # the default one. node scope only — keeps cardinality to one series per
