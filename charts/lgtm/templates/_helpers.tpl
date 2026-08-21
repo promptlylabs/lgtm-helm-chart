@@ -132,6 +132,25 @@ Include under a matchExpressions: key, e.g. with nindent 10.
 {{- end -}}
 
 {{/*
+Namespaces the target allocators may read Secrets in.
+
+Always includes the release namespace, because the operator treats
+prometheusCR.secretNamespaces as a REPLACEMENT for the default (which is the
+allocator's own namespace), not an addition — GetSecretsAllowList only falls
+back to the collector namespace when the list is empty. Setting the values key
+without this prepend would silently stop the allocator resolving the monitors in
+its own namespace, including the bundled prom-stack-operator one.
+
+Single source of truth for the CRs' prometheusCR.secretNamespaces and the Roles
+in collectors/rbac.yaml — the informer scope and the RBAC must match or the
+allocator crashloops on a cache it is not allowed to sync. Emits a YAML list;
+read it back with fromYamlArray to range over it.
+*/}}
+{{- define "lgtm.targetAllocator.secretNamespaces" -}}
+{{- prepend .Values.collectors.targetAllocator.secretNamespaces .Release.Namespace | uniq | toYaml -}}
+{{- end -}}
+
+{{/*
 Thanos helpers (ADR-0010). The umbrella-owned Query/Store Gateway/Compactor use
 fixed names (one release per cluster, ADR-0001/0002), so the endpoints below are
 plain service DNS names, not release-prefixed.
