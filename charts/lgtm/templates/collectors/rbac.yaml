@@ -3,7 +3,8 @@ RBAC for the collectors and their target allocators.
 
 The operator auto-creates the ServiceAccounts (named <cr-name>-collector and
 <cr-name>-targetallocator) but not the ClusterRoles/Bindings they need:
-  - target allocators discover ServiceMonitors/PodMonitors cluster-wide
+  - target allocators discover ServiceMonitors/PodMonitors cluster-wide, and
+    read the Secrets those monitors reference (a namespaced Role, see below)
   - the cluster collector reads cluster state (k8sclusterreceiver) and
     events (k8seventsreceiver), and scrapes the apiserver /metrics
   - the node collector reads node stats (kubeletstats) and pod metadata
@@ -17,10 +18,16 @@ fixed because the CR names are fixed.
 {{- if or .Values.collectors.node.enabled .Values.collectors.cluster.enabled }}
 ---
 {{- /*
-One shared ClusterRole for both target allocators — the canonical permission
-set from the operator's allocator docs (with prometheusCR enabled, the
-operator's admission webhook audits for exactly these rules and warns about
-anything missing).
+One shared ClusterRole for both target allocators.
+
+These rules are exactly the set the operator's admission webhook audits — see
+targetAllocatorCRPolicyRules in internal/webhook/targetallocator_rbac.go. Note
+what that means: a clean audit proves nothing beyond "matches the audit list",
+and the audit list has no `secrets` rule at all. It does not cover everything
+the allocator needs at runtime, so do not treat webhook silence as coverage.
+
+The secrets grant the allocator actually needs is a namespaced Role, further
+down in this file — not a rule here. See the comment there for why.
 */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -40,9 +47,16 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces", "nodes", "nodes/metrics", "services", "endpoints", "pods"]
     verbs: ["get", "list", "watch"]
+  # A ConfigMap-sourced CA (tlsConfig.ca.configMap) is resolved with a direct
+  # Get today — prometheus-operator's assets.StoreBuilder.GetConfigMapKey, no
+  # informer — so "get" alone is what the allocator exercises, and it is all the
+  # webhook audit asks for. list/watch are granted anyway so that a future move
+  # to a ConfigMap informer (the shape the Secret path already has) does not
+  # reproduce the crashloop this file's Role was added for. The cost is a
+  # cluster-wide ConfigMap read on these two ServiceAccounts.
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
@@ -75,6 +89,76 @@ subjects:
     name: otel-cluster-collector-targetallocator
     namespace: {{ .Release.Namespace }}
   {{- end }}
+{{- /*
+Secret read for the target allocators — namespaced Role, not a ClusterRole rule.
+
+With prometheusCR enabled the allocator resolves each selected monitor's
+tlsConfig / basicAuth / authorization references itself, so it needs the Secrets
+they point at. Two distinct accesses:
+
+  - a PartialObjectMetadata informer over secrets, for change detection. This is
+    the one that kills the process: without list/watch the cache never syncs and
+    the allocator exits ("Unable to sync caches" / "secrets is forbidden"),
+    crashlooping every few minutes.
+  - a direct Get per referenced Secret, when building the scrape config.
+
+The informer is namespace-scoped — the allocator's own namespace unless
+prometheusCR.secretNamespaces widens it (GetSecretsAllowList(collectorNamespace)
+in cmd/otel-allocator/internal/config). A Role in the release namespace is
+therefore the exact grant it needs, not a narrowed compromise: list/watch on
+secrets cannot be bounded by resourceNames, so a ClusterRole rule here would
+mean cluster-wide secret read for both allocators to satisfy an informer that
+only ever watches one namespace.
+
+The out-of-the-box trigger lives in the release namespace anyway: the bundled
+kube-prometheus-stack's prom-stack-operator ServiceMonitor sets tlsConfig.ca to
+the prom-stack-admission webhook CA Secret.
+
+collectors.targetAllocator.secretNamespaces adds namespaces to both sides at
+once — the CRs' prometheusCR.secretNamespaces and the Roles below. Listed
+namespaces must already exist.
+*/}}
+{{- range $ns := include "lgtm.targetAllocator.secretNamespaces" . | fromYamlArray }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $.Release.Name }}-otel-targetallocator-secrets
+  namespace: {{ $ns }}
+  labels:
+    app: opentelemetry-collector
+    component: target-allocator
+    {{- include "lgtm.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $.Release.Name }}-otel-targetallocator-secrets
+  namespace: {{ $ns }}
+  labels:
+    app: opentelemetry-collector
+    component: target-allocator
+    {{- include "lgtm.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $.Release.Name }}-otel-targetallocator-secrets
+subjects:
+  {{- if $.Values.collectors.node.enabled }}
+  - kind: ServiceAccount
+    name: otel-node-collector-targetallocator
+    namespace: {{ $.Release.Namespace }}
+  {{- end }}
+  {{- if $.Values.collectors.cluster.enabled }}
+  - kind: ServiceAccount
+    name: otel-cluster-collector-targetallocator
+    namespace: {{ $.Release.Namespace }}
+  {{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.collectors.cluster.enabled }}
 ---

@@ -99,6 +99,16 @@
             }
           }
         },
+        "targetAllocator": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretNamespaces": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
         "node": {
           "type": "object",
           "additionalProperties": false,
@@ -110,6 +120,13 @@
             "collectAllNetworkInterfaces": { "type": "boolean" },
             "kubeletInsecureSkipVerify": { "type": "boolean" },
             "internalMetricsPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "targetAllocator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "resources": { "type": "object" }
+              }
+            },
             "resources": { "type": "object" },
             "tolerations": {
               "type": "array",
@@ -125,6 +142,13 @@
             "priorityClassName": { "type": "string" },
             "podSecurityContext": { "type": "object" },
             "securityContext": { "type": "object" },
+            "targetAllocator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "resources": { "type": "object" }
+              }
+            },
             "resources": { "type": "object" }
           }
         },

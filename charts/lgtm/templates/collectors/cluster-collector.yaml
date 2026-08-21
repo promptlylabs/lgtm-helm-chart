@@ -60,12 +60,19 @@ spec:
       podMonitorSelector:
         matchLabels:
           opentelemetry.io/scope: cluster
+      {{- if .Values.collectors.targetAllocator.secretNamespaces }}
+      # Namespaces the allocator watches Secrets in, for the monitors it selects
+      # that reference one. Left unset by default (the operator then scopes the
+      # informer to this namespace); when set it REPLACES that default, so the
+      # helper re-adds the release namespace. Kept in lockstep with the Roles in
+      # rbac.yaml — same helper, so the informer scope and the RBAC cannot drift.
+      secretNamespaces:
+        {{- include "lgtm.targetAllocator.secretNamespaces" . | nindent 8 }}
+      {{- end }}
+    {{- with .Values.collectors.cluster.targetAllocator.resources }}
     resources:
-      limits:
-        memory: 64Mi
-      requests:
-        cpu: 5m
-        memory: 32Mi
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 
   config:
     {{- if .Values.collectors.persistentQueue.enabled }}

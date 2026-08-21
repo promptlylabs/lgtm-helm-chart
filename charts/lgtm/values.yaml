@@ -140,6 +140,26 @@ collectors:
       # write /var/lib/otelcol/queue because it is still root-owned.
       chownInitContainer: false
 
+  # Shared target-allocator settings. The allocators are separate Deployments
+  # the operator creates alongside each collector; this block covers what they
+  # need cluster-side. Per-collector sizing lives under node/cluster below.
+  targetAllocator:
+    # Extra namespaces the allocators may read Secrets in, on top of the release
+    # namespace (which is always granted). With prometheusCR enabled an allocator
+    # resolves each selected ServiceMonitor/PodMonitor's tlsConfig / basicAuth /
+    # authorization references itself, so it needs to read the Secrets those
+    # reference. Its Secret informer is scoped to its own namespace unless
+    # prometheusCR.secretNamespaces says otherwise, so this key sets BOTH
+    # secretNamespaces on the collector CRs and a matching Role/RoleBinding per
+    # namespace (see templates/collectors/rbac.yaml).
+    # Empty (default) covers monitors in the release namespace — which includes
+    # the bundled kube-prometheus-stack operator monitor, the one that reproduces
+    # out of the box. Add a namespace here when a workload monitor there
+    # references a Secret; the allocator otherwise skips that endpoint with a
+    # "skipping object" warning. Listed namespaces must already exist, or the
+    # Role/RoleBinding fail to apply.
+    secretNamespaces: []
+
   node:
     enabled: true
     # PriorityClass for the DaemonSet. system-node-critical is built into every
@@ -191,6 +211,26 @@ collectors:
     # (the legacy service.telemetry.metrics.address shortcut was removed in
     # collector v0.111+).
     internalMetricsPort: 8888
+    # Target allocator (the separate Deployment that discovers scrape targets
+    # and hands them to this collector). Sizing tracks the number of discovered
+    # target groups, not the telemetry volume.
+    #
+    # The default is adequate ONLY for small target sets. Real datapoint from a
+    # modest 3-node production cluster: the CLUSTER allocator, which selects just
+    # the scope=cluster monitors, sits at 52Mi against this 64Mi limit — 81%
+    # utilisation with no headroom; the NODE allocator, which selects every other
+    # monitor in the cluster (19 target groups there), OOMKills at 64Mi outright.
+    # Raise limits.memory if you run more than a handful of monitors. Note an
+    # OOMKilling allocator is easy to miss: it is a separate pod whose health is
+    # not reflected in the OpenTelemetryCollector CR status, so an ArgoCD
+    # Application stays Healthy throughout (see "Operations" in the chart README).
+    targetAllocator:
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 5m
+          memory: 32Mi
     resources:
       limits:
         memory: 512Mi
@@ -214,6 +254,17 @@ collectors:
     podSecurityContext:
       fsGroup: 10001
     securityContext: {}
+    # Target allocator sizing — see collectors.node.targetAllocator.resources for
+    # what drives it. This allocator selects only the scope=cluster monitors, so
+    # its target set is the small case: 52Mi of this 64Mi limit on the cluster
+    # referenced there.
+    targetAllocator:
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          cpu: 5m
+          memory: 32Mi
     resources:
       limits:
         memory: 384Mi

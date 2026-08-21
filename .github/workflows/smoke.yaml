@@ -179,7 +179,8 @@ jobs:
             --set collectors.persistentQueue.enabled=true
           # The operator creates the workloads asynchronously — wait for them
           # to exist, then for their rollouts.
-          for w in daemonset/otel-node-collector-collector statefulset/otel-cluster-collector-collector; do
+          for w in daemonset/otel-node-collector-collector statefulset/otel-cluster-collector-collector \
+                   deploy/otel-node-collector-targetallocator deploy/otel-cluster-collector-targetallocator; do
             for i in $(seq 1 60); do
               kubectl -n observability get $w >/dev/null 2>&1 && break
               sleep 5
@@ -311,6 +312,34 @@ jobs:
             exit 1
           fi
           echo "collector logs clean"
+
+          # ADR-0014: the target allocators are separate Deployments whose health
+          # never reaches the OpenTelemetryCollector CR status, so a crashloop
+          # here is invisible to anything watching the CR (this is exactly how a
+          # missing secrets grant ran unnoticed for 8 days in production). The
+          # restart count is the only honest signal — assert it is flat, and fail
+          # loudly on the two log lines that mean the secrets informer could not
+          # sync or the process was OOMKilled building the target set.
+          for ta in otel-node-collector-targetallocator otel-cluster-collector-targetallocator; do
+            restarts=$(kubectl -n observability get pods -l app.kubernetes.io/name=$ta \
+              -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}')
+            [ -n "$restarts" ] || { echo "::error::no pods found for $ta"; exit 1; }
+            for r in $restarts; do
+              if [ "$r" -ne 0 ]; then
+                echo "::error::$ta has restarted $r time(s)"
+                kubectl -n observability describe deploy/$ta | tail -30
+                kubectl -n observability logs deploy/$ta --tail=50 || true
+                exit 1
+              fi
+            done
+            if kubectl -n observability logs deploy/$ta --tail=500 2>/dev/null \
+               | grep -qE 'secrets is forbidden|Unable to sync caches'; then
+              echo "::error::$ta cannot read secrets — the namespaced Role in rbac.yaml is missing or too narrow"
+              kubectl -n observability logs deploy/$ta --tail=500 | grep -E 'forbidden|sync caches' | head -5
+              exit 1
+            fi
+            echo "$ta: restarts=[$restarts], no secrets RBAC errors"
+          done
 
       - name: Show cluster state on failure
         if: failure()
