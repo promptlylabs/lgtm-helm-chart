@@ -183,10 +183,30 @@ spec:
     service:
       # Distinct self-identity so this collector's own otelcol_* metrics don't
       # collide with the node collector's when both are scraped and pushed to
-      # Prometheus (the distribution default is a shared "otelcol-k8s").
+      # Prometheus (the distribution default is a shared "otelcol-k8s"). This is
+      # the value Prometheus rebuilds `job` from on OTLP ingest, so it is what
+      # the bundled alert rules and the OTel Collector dashboard select on.
       telemetry:
         resource:
           service.name: otel-cluster-collector
+        # The reader is spelled out only for without_units/without_type_suffix.
+        # Left implicit, the operator injects this same pull/prometheus reader on
+        # :8888 without them, and the SDK then strips the suffixes: this
+        # collector reported otelcol_process_uptime while the node collector
+        # (which does set them) reported otelcol_process_uptime_seconds_total.
+        # Two disjoint sets of names, so every counter-based rule and dashboard
+        # panel silently covered the node collector only. Keep these in lockstep
+        # with node-collector.yaml. Port 8888 matches what the operator injects,
+        # so the monitoring Service is unchanged.
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+                    without_units: false
+                    without_type_suffix: false
       {{- if .Values.collectors.persistentQueue.enabled }}
       extensions: [file_storage/queue]
       {{- end }}

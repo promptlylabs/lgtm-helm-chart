@@ -112,37 +112,13 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "instance": true,
-              "namespace": true,
-              "container": true,
-              "endpoint": true,
-              "goversion": true,
-              "branch": true,
-              "revision": true,
-              "goarch": true,
-              "goos": true,
-              "tags": true,
-              "prometheus": true,
-              "prometheus_replica": true,
-              "cluster": true,
-              "collector_mode": true,
-              "service_name": true,
-              "service_instance_id": true,
-              "k8s_namespace_name": true,
-              "k8s_pod_name": true,
-              "k8s_container_name": true,
-              "k8s_node_name": true,
-              "k8s_statefulset_name": true,
-              "k8s_daemonset_name": true
+              "Time": true
             },
             "renameByName": {
               "Value": "Uptime",
-              "service": "Service",
+              "job": "Collector",
               "pod": "Pod",
-              "service_version": "Version"
+              "service.version": "Version"
             },
             "indexByName": {}
           }
@@ -154,7 +130,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (service, pod, service_version) (otelcol_process_uptime_seconds_total{service=~\"$collector\"})",
+          "expr": "max by (job, pod, \"service.version\") (otelcol_process_uptime_seconds_total{job=~\"$collector\"})",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -218,7 +194,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{service=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_receiver_accepted_log_records_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{job=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_receiver_accepted_log_records_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -282,7 +258,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_sent_metric_points_total{service=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_exporter_sent_log_records_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_sent_metric_points_total{job=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_exporter_sent_log_records_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -353,7 +329,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total{service=~\"$collector\"}[$__rate_interval]))/clamp_min(sum(rate(otelcol_receiver_accepted_metric_points_total{service=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_receiver_refused_metric_points_total{service=~\"$collector\"}[$__rate_interval])),1)",
+          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total{job=~\"$collector\"}[$__rate_interval]))/clamp_min(sum(rate(otelcol_receiver_accepted_metric_points_total{job=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_receiver_refused_metric_points_total{job=~\"$collector\"}[$__rate_interval])),1)",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -424,7 +400,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_refused_log_records_total{service=~\"$collector\"}[$__rate_interval]))/clamp_min(sum(rate(otelcol_receiver_accepted_log_records_total{service=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_receiver_refused_log_records_total{service=~\"$collector\"}[$__rate_interval])),1)",
+          "expr": "sum(rate(otelcol_receiver_refused_log_records_total{job=~\"$collector\"}[$__rate_interval]))/clamp_min(sum(rate(otelcol_receiver_accepted_log_records_total{job=~\"$collector\"}[$__rate_interval]))+sum(rate(otelcol_receiver_refused_log_records_total{job=~\"$collector\"}[$__rate_interval])),1)",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -495,7 +471,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(otelcol_exporter_queue_size{service=~\"$collector\"})/clamp_min(max(otelcol_exporter_queue_capacity{service=~\"$collector\"}),1)",
+          "expr": "max(otelcol_exporter_queue_size{job=~\"$collector\"})/clamp_min(max(otelcol_exporter_queue_capacity{job=~\"$collector\"}),1)",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -623,7 +599,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "metrics",
           "refId": "A",
           "editorMode": "code",
@@ -636,7 +612,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_accepted_log_records_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_accepted_log_records_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "logs",
           "refId": "B",
           "editorMode": "code",
@@ -649,7 +625,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_accepted_spans_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_accepted_spans_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "spans",
           "refId": "C",
           "editorMode": "code",
@@ -734,7 +710,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "refused metrics",
           "refId": "A",
           "editorMode": "code",
@@ -747,7 +723,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_refused_log_records_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_refused_log_records_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "refused logs",
           "refId": "B",
           "editorMode": "code",
@@ -760,7 +736,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_receiver_failed_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_failed_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "failed metrics",
           "refId": "C",
           "editorMode": "code",
@@ -842,7 +818,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (rate(otelcol_processor_incoming_items_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum by (job) (rate(otelcol_processor_incoming_items_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "in {{service}}",
           "refId": "A",
           "editorMode": "code",
@@ -855,7 +831,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (rate(otelcol_processor_outgoing_items_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum by (job) (rate(otelcol_processor_outgoing_items_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "out {{service}}",
           "refId": "B",
           "editorMode": "code",
@@ -970,7 +946,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_sent_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_sent_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "metrics",
           "refId": "A",
           "editorMode": "code",
@@ -983,7 +959,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_sent_log_records_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_sent_log_records_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "logs",
           "refId": "B",
           "editorMode": "code",
@@ -996,7 +972,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_sent_spans_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_sent_spans_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "spans",
           "refId": "C",
           "editorMode": "code",
@@ -1081,7 +1057,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_send_failed_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_send_failed_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "metrics",
           "refId": "A",
           "editorMode": "code",
@@ -1094,7 +1070,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_send_failed_log_records_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_send_failed_log_records_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "logs",
           "refId": "B",
           "editorMode": "code",
@@ -1107,7 +1083,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(otelcol_exporter_send_failed_spans_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_send_failed_spans_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "spans",
           "refId": "C",
           "editorMode": "code",
@@ -1206,7 +1182,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (otelcol_exporter_queue_size{service=~\"$collector\"})",
+          "expr": "sum by (job) (otelcol_exporter_queue_size{job=~\"$collector\"})",
           "legendFormat": "size {{service}}",
           "refId": "A",
           "editorMode": "code",
@@ -1219,7 +1195,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (otelcol_exporter_queue_capacity{service=~\"$collector\"})",
+          "expr": "sum by (job) (otelcol_exporter_queue_capacity{job=~\"$collector\"})",
           "legendFormat": "capacity {{service}}",
           "refId": "B",
           "editorMode": "code",
@@ -1304,7 +1280,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (rate(otelcol_scraper_scraped_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum by (job) (rate(otelcol_scraper_scraped_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "scraped {{service}}",
           "refId": "A",
           "editorMode": "code",
@@ -1317,7 +1293,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (rate(otelcol_scraper_errored_metric_points_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum by (job) (rate(otelcol_scraper_errored_metric_points_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "errored {{service}}",
           "refId": "B",
           "editorMode": "code",
@@ -1399,7 +1375,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (rate(otelcol_process_cpu_seconds_total{service=~\"$collector\"}[$__rate_interval]))",
+          "expr": "sum by (job) (rate(otelcol_process_cpu_seconds_total{job=~\"$collector\"}[$__rate_interval]))",
           "legendFormat": "{{service}}",
           "refId": "A",
           "editorMode": "code",
@@ -1468,7 +1444,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (otelcol_process_memory_rss_bytes{service=~\"$collector\"})",
+          "expr": "sum by (job) (otelcol_process_memory_rss_bytes{job=~\"$collector\"})",
           "legendFormat": "{{service}}",
           "refId": "A",
           "editorMode": "code",
@@ -1537,7 +1513,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (otelcol_process_runtime_heap_alloc_bytes{service=~\"$collector\"})",
+          "expr": "sum by (job) (otelcol_process_runtime_heap_alloc_bytes{job=~\"$collector\"})",
           "legendFormat": "{{service}}",
           "refId": "A",
           "editorMode": "code",
@@ -1579,7 +1555,7 @@
           "uid": "${datasource}"
         },
         "query": {
-          "query": "label_values(otelcol_process_uptime_seconds_total, service)",
+          "query": "label_values(otelcol_process_uptime_seconds_total, job)",
           "refId": "collector"
         },
         "refresh": 2,

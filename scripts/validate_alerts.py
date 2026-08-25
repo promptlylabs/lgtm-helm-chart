@@ -12,7 +12,8 @@ the chart first and validates what the alerts sidecar would actually be handed:
      provisions (templates/grafana/datasources.yaml);
   5. rule uids and titles are unique across the whole pack;
   6. every uid obeys Grafana's own limits (<=40 characters, [A-Za-z0-9_-]);
-  7. no rate()/irate()/increase() is applied to a multi-name __name__ regex.
+  7. no rate()/irate()/increase() is applied to a multi-name __name__ regex;
+  8. no promoted OTel resource attribute is spelled with underscores.
 
 Point 6 is not pedantry. Grafana treats a provisioning failure at startup as
 FATAL: it refuses to boot, so a single over-long uid in a ConfigMap crashloops
@@ -27,6 +28,14 @@ the query with "vector cannot contain metrics with the same labelset". The rule
 then sits at health=error and never fires — a guard that looks provisioned and
 is silently dead. It is also load-dependent, so CI can pass with it present.
 
+Point 8 is the third. Under translationStrategy: NoTranslation a promoted resource
+attribute keeps its dots (`k8s.pod.name`) and must be quoted in PromQL; the
+underscored spelling is Loki's. An underscored name is still a legal label name,
+so the query parses, matches nothing, and the rule sits at health=ok in
+noDataState forever — a guard that looks provisioned and is silently dead, with no
+error anywhere. That is how 0.18.0 shipped the Target Allocator restart alert, the
+one rule the pack exists for, matching zero series. See scripts/otel_label_spelling.py.
+
 Runtime coverage (do the queries return anything?) is the smoke test's job.
 
 Usage:
@@ -39,6 +48,8 @@ import sys
 from pathlib import Path
 
 import yaml
+
+from otel_label_spelling import describe, find_violations, promoted_aliases
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHART_DIR = REPO_ROOT / "charts" / "lgtm"
@@ -81,6 +92,7 @@ def render() -> str:
 
 def main() -> None:
     errors: list[str] = []
+    aliases = promoted_aliases()
     uids: dict[str, str] = {}
     titles: dict[str, str] = {}
     rule_count = 0
@@ -156,6 +168,11 @@ def main() -> None:
                             )
 
                         ds = datum.get("datasourceUid")
+                        if expr and ds == "prometheus":
+                            bad = find_violations(expr, aliases)
+                            if bad:
+                                errors.append(describe(f"{where}/{uid}", expr, bad))
+
                         if ds != EXPR_DATASOURCE and ds not in KNOWN_DATASOURCES:
                             errors.append(
                                 f"{where}/{uid}: refId {datum.get('refId')} points at datasource "

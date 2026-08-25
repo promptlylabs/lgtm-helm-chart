@@ -27,13 +27,31 @@ A rule in that state reports health=error and never fires, which is the worst
 possible failure for a guard. `or vector(0)` on each term keeps a missing metric
 from blanking the whole expression.
 
-k8s.container.restarts comes from the cluster collector's k8s_cluster receiver
-and is a dotted OTel name (translationStrategy: NoTranslation), hence the quoted
-PromQL selector. `delta` rather than `increase` because it is a gauge. We do not
-use k8s.container.status.reason, though the chart enables it: an OOMKilled or
+LABEL SPELLING — the trap this pack fell into twice. Prometheus ingests OTLP
+with translationStrategy: NoTranslation (values.yaml), so metric names AND label
+names keep their dots and must be QUOTED in PromQL: {"k8s.container.restarts",
+"k8s.pod.name"=~"..."}, max by ("k8s.pod.name"). The underscored spelling
+(k8s_pod_name) is correct for LOKI only — Loki's OTLP ingestion sanitises
+attribute names, which is why datasources.yaml uses it. Mixing them does not
+error: an underscored label is a legal label name that simply matches nothing,
+so the rule reports health=ok, sits at NoData -> noDataState, and never fires.
+That is indistinguishable from "healthy" in every UI. Same rule in annotations:
+$labels.k8s_pod_name cannot reach a dotted label — use index $labels "k8s.pod.name".
+
+k8s.container.restarts comes from the cluster collector's k8s_cluster receiver.
+`delta` rather than `increase` because it is a gauge. We do not use
+k8s.container.status.reason, though the chart enables it: an OOMKilled or
 CrashLoopBackOff container restarts too, so restarts already covers both, and
 that metric carries its reason as a *data-point* attribute whose label spelling
 under NoTranslation is not exercised anywhere else in this chart.
+
+COLLECTOR IDENTITY — select a collector with `job`, never `service`. Each
+collector sets service.telemetry.resource.service.name (see the collector
+templates); Prometheus rebuilds `job` from it on OTLP ingest, so job is exactly
+the name this chart chose. `service` is the operator-derived Kubernetes Service
+name, "otel-node-collector-collector-monitoring" — an absent() keyed on it is
+permanently true and fires on day one. Matches the up{job=~...} idiom in the
+loki/prometheus/tempo packs.
 */ -}}
 apiVersion: 1
 groups:
@@ -52,16 +70,16 @@ groups:
         annotations:
           summary: A collector Target Allocator is crashlooping
           description: >-
-            {{ `{{ $labels.k8s_pod_name }}` }} has restarted more than twice in the last hour.
+            {{ `{{ index $labels "k8s.pod.name" }}` }} has restarted more than twice in the last hour.
             Scrape targets flap in and out of the collector's scrape set while this lasts, so
             ServiceMonitor-based metrics across the whole cluster go intermittently missing.
             The allocator's health is not reflected in the OpenTelemetryCollector CR status —
-            check `kubectl -n {{ .Release.Namespace }} logs pod/{{ `{{ $labels.k8s_pod_name }}` }}`
+            check `kubectl -n {{ .Release.Namespace }} logs pod/{{ `{{ index $labels "k8s.pod.name" }}` }}`
             and its memory limit (collectors.<node|cluster>.targetAllocator.resources).
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 2 "from" 3600 "expr" `max by (k8s_pod_name) (delta({"k8s.container.restarts", k8s_pod_name=~"otel-(node|cluster)-collector-targetallocator-.+"}[1h]))`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 2 "from" 3600 "expr" (printf `max by ("k8s.pod.name") (delta({"k8s.container.restarts", "k8s.pod.name"=~"otel-(node|cluster)-collector-targetallocator-.+", "k8s.namespace.name"="%s"}[1h]))` .Release.Namespace)) | nindent 10 }}
 
       - uid: lgtm-otelcol-exporter-failures
         title: OTel collector failing to export telemetry
@@ -90,14 +108,14 @@ groups:
         execErrState: Error
         isPaused: false
         annotations:
-          summary: Collector {{ `{{ $labels.service }}` }} sending queue is over 90% full
+          summary: Collector {{ `{{ $labels.job }}` }} sending queue is over 90% full
           description: >-
             A full queue drops new batches. Usually the backend is slow or down; if it is not,
             the queue is undersized for the volume.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.9 "expr" `max by (service) (otelcol_exporter_queue_size) / clamp_min(max by (service) (otelcol_exporter_queue_capacity), 1)`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.9 "expr" `max by (job) (otelcol_exporter_queue_size) / clamp_min(max by (job) (otelcol_exporter_queue_capacity), 1)`) | nindent 10 }}
 
 {{- range $signal := (list (dict "kind" "metric_points" "noun" "metric points") (dict "kind" "log_records" "noun" "log records")) }}
 
@@ -139,6 +157,6 @@ groups:
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" $ "labels" (dict "severity" "critical" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" $ "expr" (printf `absent(otelcol_process_uptime_seconds_total{service="otel-%s-collector"})` $collector)) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" $ "expr" (printf `absent(otelcol_process_uptime_seconds_total{job="otel-%s-collector"})` $collector)) | nindent 10 }}
 {{- end }}
 {{- end }}
