@@ -17,6 +17,16 @@ README's Operations section). We have seen this hide a node-allocator crashloop
 for 8 days and ~1800 restarts while every ServiceMonitor in the cluster silently
 flapped in and out of the scrape set.
 
+Note the shape of the multi-signal rules: one sum() per metric name, combined
+with +, never a single rate({__name__=~"a|b"}) selector. rate() strips __name__
+from its output, so a regex matching two metric names that a receiver emits for
+the same labelset — the otlp receiver reports refusals for metrics AND logs
+under one `receiver` label — produces a vector with duplicate labelsets and
+Prometheus errors with "vector cannot contain metrics with the same labelset".
+A rule in that state reports health=error and never fires, which is the worst
+possible failure for a guard. `or vector(0)` on each term keeps a missing metric
+from blanking the whole expression.
+
 k8s.container.restarts comes from the cluster collector's k8s_cluster receiver
 and is a dotted OTel name (translationStrategy: NoTranslation), hence the quoted
 PromQL selector. `delta` rather than `increase` because it is a gauge. We do not
@@ -61,15 +71,16 @@ groups:
         execErrState: Error
         isPaused: false
         annotations:
-          summary: Collector {{ `{{ $labels.service }}` }} is dropping telemetry on export
+          summary: A collector is dropping telemetry on export
           description: >-
             Spans, metric points or log records are failing to send to their backend. Sustained
             failures fill the sending queue and then drop data. Check the backend's own alerts
-            first, then the collector logs.
+            first, then the collector logs. The OTel Collector dashboard breaks this down by
+            collector and signal.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum by (service) (rate({__name__=~"otelcol_exporter_send_failed_(spans|metric_points|log_records)_total"}[5m]))`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `(sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_metric_points_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_log_records_total[5m])) or vector(0))`) | nindent 10 }}
 
       - uid: lgtm-otelcol-queue-near-capacity
         title: OTel collector sending queue near capacity
@@ -88,22 +99,25 @@ groups:
         data:
           {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.9 "expr" `max by (service) (otelcol_exporter_queue_size) / clamp_min(max by (service) (otelcol_exporter_queue_capacity), 1)`) | nindent 10 }}
 
-      - uid: lgtm-otelcol-receiver-refusing
-        title: OTel collector refusing incoming telemetry
+{{- range $signal := (list (dict "kind" "metric_points" "noun" "metric points") (dict "kind" "log_records" "noun" "log records")) }}
+
+      - uid: lgtm-otelcol-refusing-{{ $signal.kind | replace "_" "-" }}
+        title: OTel collector refusing incoming {{ $signal.noun }}
         condition: C
         for: 10m
         noDataState: OK
         execErrState: Error
         isPaused: false
         annotations:
-          summary: Collector {{ `{{ $labels.service }}` }} is refusing over 5% of incoming data
+          summary: A collector is refusing over 5% of incoming {{ $signal.noun }}
           description: >-
-            The receiver is rejecting data points or log records — most often memory_limiter
-            backpressure, which means the collector is undersized for the volume it is being sent.
+            The receiver is rejecting {{ $signal.noun }} — most often memory_limiter backpressure,
+            which means the collector is undersized for the volume it is being sent.
         labels:
-          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
+          {{- include "lgtm.alerting.labels" (dict "root" $ "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.05 "expr" `sum by (service) (rate({__name__=~"otelcol_receiver_refused_(metric_points|log_records)_total"}[5m])) / clamp_min(sum by (service) (rate({__name__=~"otelcol_receiver_(accepted|refused)_(metric_points|log_records)_total"}[5m])), 1)`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" $ "threshold" 0.05 "expr" (printf `sum(rate(otelcol_receiver_refused_%s_total[5m])) / clamp_min(sum(rate(otelcol_receiver_accepted_%s_total[5m])) + sum(rate(otelcol_receiver_refused_%s_total[5m])), 1)` $signal.kind $signal.kind $signal.kind)) | nindent 10 }}
+{{- end }}
 {{- range $collector := (list "node" "cluster") }}
 {{- if (index $.Values.collectors $collector).enabled }}
 

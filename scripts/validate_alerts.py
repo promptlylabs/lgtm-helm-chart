@@ -11,13 +11,21 @@ the chart first and validates what the alerts sidecar would actually be handed:
   4. every non-expression datasourceUid resolves to a datasource this chart
      provisions (templates/grafana/datasources.yaml);
   5. rule uids and titles are unique across the whole pack;
-  6. every uid obeys Grafana's own limits (<=40 characters, [A-Za-z0-9_-]).
+  6. every uid obeys Grafana's own limits (<=40 characters, [A-Za-z0-9_-]);
+  7. no rate()/irate()/increase() is applied to a multi-name __name__ regex.
 
 Point 6 is not pedantry. Grafana treats a provisioning failure at startup as
 FATAL: it refuses to boot, so a single over-long uid in a ConfigMap crashloops
 Grafana and takes the whole observability UI with it. That is exactly how this
 check earned its place — a 43-character uid shipped, and the only thing that
 caught it was nine minutes into the kind smoke test.
+
+Point 7 is the other bug this file has already caught in anger. rate() strips
+__name__ from its output, so `rate({__name__=~"a_total|b_total"}[5m])` yields
+duplicate labelsets whenever both metrics share a labelset, and Prometheus fails
+the query with "vector cannot contain metrics with the same labelset". The rule
+then sits at health=error and never fires — a guard that looks provisioned and
+is silently dead. It is also load-dependent, so CI can pass with it present.
 
 Runtime coverage (do the queries return anything?) is the smoke test's job.
 
@@ -47,6 +55,13 @@ UID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # Grafana's own column limit for the rule title.
 MAX_TITLE_LENGTH = 190
+
+# rate()/irate()/increase() over a __name__ regex that can match more than one
+# metric name. Detected on the rendered expression, so a Helm-generated rule is
+# covered too.
+RATE_OVER_NAME_REGEX = re.compile(
+    r"\b(?:rate|irate|increase)\s*\(\s*\{[^}]*__name__\s*=~[^}]*\}"
+)
 
 
 def render() -> str:
@@ -130,6 +145,16 @@ def main() -> None:
                         errors.append(f"{where}/{uid}: condition C has no matching entry in data[]")
 
                     for datum in rule.get("data", []):
+                        expr = (datum.get("model") or {}).get("expr", "")
+                        if expr and RATE_OVER_NAME_REGEX.search(expr):
+                            errors.append(
+                                f"{where}/{uid}: rate()/increase() over a __name__ regex. "
+                                "rate() drops __name__, so matching several metric names yields "
+                                "duplicate labelsets and the query fails at evaluation time "
+                                "(health=error, rule never fires). Sum each metric name "
+                                "separately and add the results instead"
+                            )
+
                         ds = datum.get("datasourceUid")
                         if ds != EXPR_DATASOURCE and ds not in KNOWN_DATASOURCES:
                             errors.append(
