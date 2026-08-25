@@ -94,6 +94,25 @@ spec:
         {{- include "lgtm.collector.sendingQueue" (dict "root" . "storage" false) | nindent 8 }}
 
     service:
+      # Same self-identity and suffix flags as the node and cluster collectors,
+      # so this collector shows up in the OTel Collector dashboard's picker and
+      # in the generic rules of alerts/otel-collector.yaml when it is enabled.
+      # Without the resource it reports as the distribution default and collides
+      # with the others; without the two flags the SDK strips the
+      # _total/_seconds/_bytes suffixes those queries use. See
+      # node-collector.yaml for the long version.
+      telemetry:
+        resource:
+          service.name: otel-faro-collector
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+                    without_units: false
+                    without_type_suffix: false
       pipelines:
         logs:
           receivers: [faro]

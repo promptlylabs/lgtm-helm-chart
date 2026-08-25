@@ -70,9 +70,14 @@ real metric names (validated on a live kind stack) and consistent with the exist
   for the external meta stack, exactly like every other component. For the two collectors to be
   distinguishable in the dashboard, each carries a distinct `service.telemetry.resource.service.name`
   (`otel-node-collector` / `otel-cluster-collector`) — the distribution default is a shared
-  `otelcol-k8s`, which collapses their self-metrics into one series — and the node collector's
-  telemetry reader keeps the classic `_total`/`_seconds`/`_bytes` suffixes so its `otelcol_*` names
-  match the operator-default cluster collector.
+  `otelcol-k8s`, which collapses their self-metrics into one series. That name is what Prometheus
+  rebuilds `job` from on OTLP ingest, so `job` is how the dashboards and rules select a collector;
+  `service` is the operator-derived Kubernetes Service name (`…-collector-monitoring`) and is not
+  the collector's identity. Every collector CR must also set `without_units: false` /
+  `without_type_suffix: false` on its telemetry reader: the reader the operator injects when the
+  block is left implicit omits both, and the SDK then strips the classic
+  `_total`/`_seconds`/`_bytes` suffixes, landing that collector's `otelcol_*` metrics under a
+  disjoint set of names from the ones the dashboards and rules query.
 
 ## Alternatives considered
 

@@ -338,6 +338,89 @@ jobs:
           fi
           echo "no alert rules in error state"
 
+          # health=error is the ONLY failure the check above can see, and it is
+          # the one mode these rules do not fail in. 0.18.0 shipped three that
+          # passed it: a guard whose label was spelled k8s_pod_name instead of
+          # "k8s.pod.name" (legal label name, matches nothing, health=ok, parks
+          # in noDataState forever), and two absent() rules keyed on a label
+          # value that never existed (permanently true, firing since install).
+          # Both directions are invisible to a health check, so assert on the
+          # data instead.
+
+          # 1. Both collectors report self-metrics under the SAME names. The
+          # operator-injected telemetry reader strips the _total/_seconds/_bytes
+          # suffixes; each collector CR overrides that (without_units /
+          # without_type_suffix). Miss it on one CR and its self-metrics land
+          # under a disjoint set of names, so every counter-based rule and
+          # dashboard panel silently covers the other collector only.
+          collectors=$(curl -fsS --get localhost:19090/api/v1/query \
+            --data-urlencode 'query=count by (job) (otelcol_process_uptime_seconds_total)' \
+            | python3 -c 'import json,sys; print(" ".join(sorted(r["metric"].get("job","") for r in json.load(sys.stdin)["data"]["result"])))')
+          for c in otel-node-collector otel-cluster-collector; do
+            case " $collectors " in
+              *" $c "*) ;;
+              *) fail "$c reports no otelcol_process_uptime_seconds_total (got: '$collectors'). Check without_units/without_type_suffix on its telemetry reader" ;;
+            esac
+          done
+          echo "both collectors report suffixed self-metrics ($collectors)"
+
+          # 2. Every absent()-based rule must return EMPTY on a healthy stack.
+          # absent() yields 1 exactly when its selector matches nothing, so a
+          # non-empty result here means the rule is firing on day one — either
+          # the component really is down, or (the bug we shipped) the selector
+          # names a label or value that does not exist.
+          #
+          # 3. The Target Allocator guard is the rule this pack exists for, and
+          # the one that was dead. Assert it matches at least one series.
+          # Deliberately not generalised to "every rule returns data": rules like
+          # the 5xx-ratio ones correctly return nothing when nothing is wrong.
+          curl -fsS -u "admin:$GP" localhost:13000/api/v1/provisioning/alert-rules > /tmp/rules.json
+          python3 - <<'PY' || fail "bundled alert rules do not match live data — see errors above"
+          import json, urllib.parse, urllib.request
+
+          rules = json.load(open("/tmp/rules.json"))
+          bad = []
+
+          def series(expr):
+              url = "http://localhost:19090/api/v1/query?" + urllib.parse.urlencode({"query": expr})
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  payload = json.load(response)
+              if payload.get("status") != "success":
+                  raise RuntimeError(payload.get("error", "query failed"))
+              return payload["data"]["result"]
+
+          for rule in rules:
+              uid = rule.get("uid", "")
+              for datum in rule.get("data", []):
+                  expr = (datum.get("model") or {}).get("expr")
+                  if not expr or datum.get("datasourceUid") != "prometheus":
+                      continue
+                  result = series(expr)
+                  if expr.startswith("absent(") and result:
+                      bad.append(f"{uid}: absent() rule is TRUE on a healthy stack, so it "
+                                 f"fires on day one — the series it guards does not exist: {expr}")
+                  if uid == "lgtm-otelcol-targetallocator-restarting" and not result:
+                      bad.append(f"{uid}: matches zero series, so the guard is inert — check the "
+                                 f"label spelling against translationStrategy: NoTranslation: {expr}")
+
+          for message in bad:
+              print(f"::error::{message}")
+          raise SystemExit(1 if bad else 0)
+          PY
+          echo "bundled alert rules match live data"
+
+          # 4. Nothing should be firing on a healthy stack. Same settling poll as
+          # the health check above — `for:` durations are 10-15m, so anything
+          # firing this early has been in breach since install.
+          for i in $(seq 1 12); do
+            firing=$(curl -fsS -u "admin:$GP" 'localhost:13000/api/prometheus/grafana/api/v1/rules' \
+              | python3 -c 'import json,sys; print(" ".join(r["name"] for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"] if r.get("state") == "firing"))')
+            [ -z "$firing" ] && break
+            sleep 10
+          done
+          [ -z "$firing" ] || fail "alert rules firing on a healthy stack: $firing"
+          echo "no alert rules firing"
+
       - name: Check collectors for steady-state errors
         run: |
           # Startup races (target allocator not up yet) log errors in the

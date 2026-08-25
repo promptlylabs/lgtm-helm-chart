@@ -370,9 +370,15 @@ spec:
                   prometheus:
                     host: 0.0.0.0
                     port: {{ .Values.collectors.node.internalMetricsPort }}
-                    # Keep the classic _total/_seconds/_bytes suffixes so this
-                    # collector's otelcol_* names match the operator-default
-                    # cluster collector (and every standard OTel dashboard).
+                    # These two produce the classic _total/_seconds/_bytes
+                    # suffixes that every standard OTel dashboard (and this
+                    # chart's own rules) query. They are NOT the operator
+                    # default: the reader the operator injects when this block
+                    # is left implicit omits them, and the SDK then strips the
+                    # suffixes. So every collector CR in this chart must set
+                    # them, or its self-metrics land under a disjoint set of
+                    # names and drop out of the pack silently. Keep in lockstep
+                    # with cluster-collector.yaml and faro-collector.yaml.
                     without_units: false
                     without_type_suffix: false
       pipelines:
