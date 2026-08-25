@@ -35,7 +35,7 @@ The architecture is OTLP-push with a scrape-less, storage-only Prometheus: colle
 | pyroscope | [grafana](https://github.com/grafana/pyroscope/tree/main/operations/pyroscope/helm/pyroscope) | single binary, v2 storage |
 | opentelemetry-operator | [open-telemetry](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator) | manages the 3 collector CRs below |
 
-Plus, owned by this chart: **node**, **cluster** and (optional) **faro** OpenTelemetryCollector CRs, a Grafana datasources ConfigMap with full trace/log/metric/profile correlations, and fourteen dashboards: OTel-native infrastructure views (home, host metrics, cluster, namespace, container, storage, network, Karpenter/NAP) plus first-party component self-observability dashboards (Loki, Prometheus, OTel Collector, Grafana, Tempo, Pyroscope). Each dashboard is provisioned only when the component it observes is enabled (the `otel-*` views follow `collectors.enabled`; `home` is always shipped). The component dashboards read self-metrics that are only collected with in-cluster self-monitoring on — `lgtm.metaMonitoring.enabled=false`, the default (see [ADR-0012](../../docs/adrs/0012-first-party-component-dashboards.md)).
+Plus, owned by this chart: **node**, **cluster** and (optional) **faro** OpenTelemetryCollector CRs, a Grafana datasources ConfigMap with full trace/log/metric/profile correlations, and fourteen dashboards: OTel-native infrastructure views (home, host metrics, cluster, namespace, container, storage, network, Karpenter/NAP) plus first-party component self-observability dashboards (Loki, Prometheus, OTel Collector, Grafana, Tempo, Pyroscope). Each dashboard is provisioned only when the component it observes is enabled (the `otel-*` views follow `collectors.enabled`; `home` is always shipped). The component dashboards read self-metrics that are only collected with in-cluster self-monitoring on — `lgtm.metaMonitoring.enabled=false`, the default (see [ADR-0012](../../docs/adrs/0012-first-party-component-dashboards.md)). On top of those, a baseline pack of **Grafana-managed alert rules** for the same components, gated the same way (see [Alerting](#alerting) and [ADR-0015](../../docs/adrs/0015-grafana-managed-alerting.md)).
 
 ## Install
 
@@ -80,6 +80,15 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `lgtm.dashboards.enabled` | `true` | Provision the shipped dashboards (each gated on the component it observes) |
 | `lgtm.dashboards.folder` | `Platform` | Grafana folder for the shipped dashboards |
 | `lgtm.dashboards.exclude` | `[]` | Skip dashboards by basename (e.g. `[loki, prometheus, otel-collector, grafana, tempo, pyroscope, otel-karpenter-nap]`) |
+| `lgtm.alerting.enabled` | `true` | Provision the shipped Grafana alert rules (each gated on the component it watches) |
+| `lgtm.alerting.folder` | `Platform` | Grafana folder for the shipped rule groups |
+| `lgtm.alerting.interval` | `1m` | Evaluation interval for the shipped rule groups |
+| `lgtm.alerting.datasourceUid` | `prometheus` | Datasource the shipped rules query |
+| `lgtm.alerting.commonLabels` | `{}` | Labels merged onto every shipped rule, for routing (e.g. `{team: platform}`) |
+| `lgtm.alerting.exclude` | `[]` | Skip rule packs by basename (`[otel-collector, loki, prometheus, tempo]`) |
+| `lgtm.alerting.contactPoints` | `[]` | Contact points, in Grafana provisioning format — see [Alerting](#alerting) |
+| `lgtm.alerting.policies` | `[]` | Notification policies. Only provisioned when `contactPoints` is also set |
+| `lgtm.alerting.templates` | `[]` | Notification templates, in Grafana provisioning format |
 | `lgtm.metaMonitoring.enabled` | `false` | Reserve the observability stack's own `scope: observability` ServiceMonitors for a separate meta-monitoring stack; default `false` scrapes them in-cluster |
 | `collectors.enabled` | `true` | Master switch for all collector CRs |
 | `collectors.image` | `""` | Override the collector image (node + cluster) |
@@ -108,7 +117,7 @@ The Thanos **sidecar** itself is a `kube-prometheus-stack.*` pass-through (not a
 
 - **Apps** send OTLP to `otel-node-collector-collector.<namespace>.svc:4317` (gRPC) or `:4318` (HTTP). The operator service routes to the same-node collector pod.
 - **ServiceMonitors/PodMonitors** are scraped automatically, from any namespace, with no labels needed. Label `opentelemetry.io/scope: cluster` routes a monitor to the cluster collector instead. Label `opentelemetry.io/scope: observability` marks the observability stack's own monitors — by default they're scraped in-cluster like everything else; set `lgtm.metaMonitoring.enabled=true` to reserve them for a separate meta-monitoring stack (see [`examples/values-meta-monitoring.yaml`](examples/values-meta-monitoring.yaml)).
-- **Dashboards**: any ConfigMap labelled `grafana_dashboard: "1"` in any namespace (folder via the `grafana_folder` annotation). Datasources and Grafana alert rules work the same with `grafana_datasource` / `grafana_alert`.
+- **Dashboards**: any ConfigMap labelled `grafana_dashboard: "1"` in any namespace (folder via the `grafana_folder` annotation). Datasources and Grafana alert rules work the same with `grafana_datasource` / `grafana_alert` — note alert rules name their folder *inside* the provisioning file, not in an annotation. See [Alerting](#alerting).
 - **PromQL**: OTel metric names are preserved 1:1 — quote dotted names, e.g. `{"k8s.pod.cpu.usage"}`.
 
 ### Target allocator
@@ -122,6 +131,52 @@ The chart grants this with a namespaced `Role` + `RoleBinding` in the release na
 If a monitor in **another** namespace references a Secret, list that namespace in `collectors.targetAllocator.secretNamespaces`. That widens both sides together — the CRs' `prometheusCR.secretNamespaces` and the Roles — which is the point of the single key: if the informer scope and the RBAC ever disagreed, the allocator would crashloop on a cache it is not allowed to sync. The release namespace is always included, and the listed namespaces must already exist. Leave it empty and a secret-referencing monitor elsewhere is simply skipped, with a `skipping object` warning in the allocator log and no scrape for that endpoint — degraded, but not fatal.
 
 **Size it for your target set.** `collectors.<node|cluster>.targetAllocator.resources` defaults to a `64Mi` limit with `5m`/`32Mi` requests, and allocator memory tracks the number of discovered target groups, not telemetry volume. That default is adequate **only for small target sets**. A real datapoint from a modest 3-node production cluster: the *cluster* allocator — which selects only the `scope: cluster` monitors, so the smallest target set the chart produces — sits at **52Mi against the 64Mi limit, 81% utilisation with no headroom**; the *node* allocator on the same cluster, which selects every other monitor (19 target groups), **OOMKills at 64Mi outright** (`exitCode: 137`). If you run more than a handful of monitors, raise `collectors.node.targetAllocator.resources.limits.memory` — `128Mi` is a reasonable starting point — and read the [Operations](#operations) note on why an OOMKilling allocator is easy to miss.
+
+### Alerting
+
+Alerting is **Grafana-managed** (ADR-0015): Alertmanager is disabled, and rules, contact points and notification policies are provisioned from ConfigMaps labelled `grafana_alert: "1"`, from any namespace. The chart ships a baseline rule pack for its own components, and no contact points — where alerts *go* is site-specific.
+
+**The shipped rules** live in `alerts/`, one pack per component, each gated on that component being enabled exactly like the dashboards: `otel-collector`, `loki`, `prometheus`, `tempo`. They watch ingest and query error rates, queue and WAL saturation, compaction health, and — the one that prompted the pack — **Target Allocator restarts**. Each allocator is a separate Deployment whose health is not reflected in the parent `OpenTelemetryCollector` CR status, so an ArgoCD Application reports `Healthy` right through an allocator crashloop; we have seen that hide one for 8 days and ~1800 restarts while every ServiceMonitor in the cluster flapped in and out of the scrape set (see [Target allocator](#target-allocator) and [Operations](#operations)).
+
+Two things to know about them:
+
+- They read the stack's **own self-metrics**, which only exist with in-cluster self-monitoring on — `lgtm.metaMonitoring.enabled=false`, the default. With a separate meta-monitoring stack these rules evaluate to no data; every rate-based rule uses `noDataState: OK` so that stays quiet rather than firing, and the per-component "not reporting" rules are the ones that would tell you.
+- They are **on by default and notify nothing** until you add a contact point. Firing rules are visible in Grafana's Alerting UI from the first install; nothing is sent anywhere until `lgtm.alerting.contactPoints` and `lgtm.alerting.policies` are set.
+
+Drop individual packs with `lgtm.alerting.exclude` (by basename), or turn the whole thing off with `lgtm.alerting.enabled=false`. Tag every shipped rule for routing with `lgtm.alerting.commonLabels`.
+
+**Contact points and policies** pass straight through to Grafana's [file-provisioning format](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/):
+
+```yaml
+lgtm:
+  alerting:
+    commonLabels:
+      team: platform
+    contactPoints:
+      - orgId: 1
+        name: platform-oncall
+        receivers:
+          - uid: platform-oncall-email
+            type: email
+            settings:
+              addresses: oncall@example.com
+    policies:
+      - orgId: 1
+        receiver: platform-oncall
+        group_by: [alertname, component]
+```
+
+Policies are only provisioned when `contactPoints` is also non-empty: a policy routing to a receiver Grafana has never seen fails provisioning outright and takes the rest of the file with it.
+
+Writing your own rules: the shipped ones follow the convention that **a positive PromQL result means bad**, so every rule is a `gt` threshold and reads the same in the file as it does in the UI. For "should be present but isn't", `absent()` gives the same polarity.
+
+### Alerting HA (more than one Grafana replica)
+
+Grafana-managed alerting means each Grafana replica runs its own Alertmanager. The chart wires them into a gossip ring unconditionally — `grafana.headlessService` plus `grafana.ini`'s `[unified_alerting]` `ha_listen_address` / `ha_advertise_address` / `ha_peers`, pointed at the `grafana-headless` Service on `:9094`. At the default single replica that is one peer gossiping with itself, i.e. a no-op; without it, scaling to two replicas would silently notify twice for every alert. (`POD_IP` needs no wiring: the Grafana chart already injects it, and `$__env{POD_IP}` is expanded by Grafana's own config parser.)
+
+**The gossip ring is necessary but not sufficient.** Grafana's HA alerting also requires every replica to share **one database**, and this chart defaults to ephemeral per-pod SQLite — each replica would otherwise keep its own alert state, silences and dashboards. So `grafana.replicas > 1` needs an external MySQL/PostgreSQL as well; [`values-azure.yaml`](examples/values-azure.yaml) shows the PostgreSQL pattern.
+
+The chart refuses to render rather than ship a stack that double-notifies: raising `grafana.replicas` above 1 fails with a message unless both halves are in place. It accepts a database configured in `grafana.ini`, via `GF_DATABASE_TYPE`/`GF_DATABASE_URL` in `grafana.env`, or through any `envFrom*` source it cannot introspect.
 
 ### Storage
 
@@ -222,16 +277,16 @@ plus the computed ones via `lgtm.endpoints.*`.
 ## Operations
 
 - **Footprint**: the default install requests ≈0.5 CPU / 3.5Gi memory (memory limits total ≈7Gi). Every workload ships requests and memory limits; CPU limits are intentionally unset to avoid throttling.
-- **Watch the target allocators, not just the collectors**: each allocator is a *separate* Deployment, and its health is **not** reflected in the parent `OpenTelemetryCollector` CR status — so an ArgoCD Application reports `Healthy` right through an allocator crashloop. We have seen this hide a node-allocator crashloop for 8 days (1839 restarts) while every ServiceMonitor in the cluster silently flapped in and out of the scrape set. There is no liveness probe that would have caught it either; the signal is the restart count. Check it directly with `kubectl -n observability get pods -l app.kubernetes.io/component=opentelemetry-targetallocator`, and alert on it — the cluster collector's `k8s_cluster` receiver already reports `k8s.container.restarts` and `k8s.container.status.reason`, so a non-flat restart count or an `OOMKilled` reason on those pods is queryable in Prometheus today.
+- **Watch the target allocators, not just the collectors**: each allocator is a *separate* Deployment, and its health is **not** reflected in the parent `OpenTelemetryCollector` CR status — so an ArgoCD Application reports `Healthy` right through an allocator crashloop. We have seen this hide a node-allocator crashloop for 8 days (1839 restarts) while every ServiceMonitor in the cluster silently flapped in and out of the scrape set. There is no liveness probe that would have caught it either; the signal is the restart count. Check it directly with `kubectl -n observability get pods -l app.kubernetes.io/component=opentelemetry-targetallocator`. **The chart now alerts on this by default** — the `otel-collector` rule pack fires when an allocator restarts more than twice in an hour, off `k8s.container.restarts` from the cluster collector's `k8s_cluster` receiver (see [Alerting](#alerting)).
 - **Cluster prerequisites**: a default StorageClass must exist — Prometheus/Loki/Tempo/Pyroscope PVCs sit Pending forever without one (`kubectl get storageclass`).
 - **Data and uninstall**: `helm uninstall` keeps the data PVCs (Loki's StatefulSet auto-delete is explicitly disabled in the defaults) and keeps the CRDs — both are standard Helm behavior. A reinstall into the same namespace re-adopts the existing data. To wipe everything: uninstall, then delete the PVCs in the namespace and the `monitoring.coreos.com`/`opentelemetry.io` CRDs.
 - **Grafana state is ephemeral by default** (SQLite in the pod, persistence off): everything provisioned by ConfigMaps — dashboards, datasources, alert rules — reappears after a restart, but content created *in the UI* (dashboards, contact points, silences) is lost. For durable UI state use an external database (see the azure example) or enable `grafana.persistence`.
-- **Alerting**: Alertmanager is disabled; alerting is Grafana-managed and the chart ships no alert rules. Provision rules and contact points as ConfigMaps labelled `grafana_alert: "1"` (Grafana alerting provisioning format) — with the ephemeral-state caveat above, never create them only in the UI.
+- **Alerting**: Alertmanager is disabled; alerting is Grafana-managed. The chart ships a baseline rule pack for its own components and no contact points — see [Alerting](#alerting). Your own rules and contact points go in ConfigMaps labelled `grafana_alert: "1"` (Grafana alerting provisioning format) — with the ephemeral-state caveat above, never create them only in the UI.
 - **Scaling**: the single-binary defaults are deliberate (see ADR-0004). Loki with filesystem storage is hard-limited to 1 replica — moving to object storage (cloud examples) is the prerequisite for scaling any of Loki/Tempo, and Prometheus HA is out of scope for this chart's defaults. Durable, long-term-queryable metrics are available separately via the optional Thanos sidecar + query stack (see [Long-term metrics (Thanos)](#long-term-metrics-thanos)).
 
 ## Development
 
-Chart defaults live in `values.d/` fragments — edit those, then `make values` to regenerate `values.yaml` (CI rejects stale files). `make deps lint template kubeconform` runs the full local validation. Dashboards are plain JSON under `dashboards/`; each file becomes one ConfigMap, gated on its component in `templates/grafana/dashboards.yaml` (the `$gate` map).
+Chart defaults live in `values.d/` fragments — edit those, then `make values` to regenerate `values.yaml` (CI rejects stale files). `make deps lint template kubeconform` runs the full local validation. Dashboards are plain JSON under `dashboards/`; each file becomes one ConfigMap, gated on its component in `templates/grafana/dashboards.yaml` (the `$gate` map). Alert rules follow the same shape under `alerts/`, gated in `templates/grafana/alerting.yaml` — except that those files **are** rendered through `tpl`, so they can call the shared `lgtm.alerting.query` helper for the A/B/C `data[]` triple, and any Grafana templating in them has to be escaped from Helm (`` {{ `{{ $labels.pod }}` }} ``). `make validate-alerts` renders and checks them.
 
 ## License
 

@@ -47,6 +47,36 @@
             }
           }
         },
+        "alerting": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "folder": { "type": "string", "minLength": 1 },
+            "interval": { "type": "string", "minLength": 1 },
+            "datasourceUid": { "type": "string", "minLength": 1 },
+            "commonLabels": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "exclude": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "contactPoints": {
+              "type": "array",
+              "items": { "type": "object" }
+            },
+            "policies": {
+              "type": "array",
+              "items": { "type": "object" }
+            },
+            "templates": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
+          }
+        },
         "metaMonitoring": {
           "type": "object",
           "additionalProperties": false,

@@ -298,6 +298,34 @@ jobs:
             || fail "a component dashboard ConfigMap is missing (gating regression)"
           echo "component dashboard ConfigMaps present"
 
+          # ── grafana: the alerts sidecar provisioned the bundled rules ────
+          # Static validation (make validate-alerts) proves the YAML is well
+          # formed; only a live Grafana proves it actually loads — a bad
+          # datasourceUid or a malformed data[] is accepted by the parser and
+          # rejected by the provisioner.
+          rules=$(curl -fsS -u "admin:$GP" localhost:13000/api/v1/provisioning/alert-rules \
+            | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          # Full default stack: 6 otel-collector + 5 loki + 5 prometheus + 4 tempo = 20.
+          [ "$rules" -ge 20 ] || fail "expected >=20 provisioned Grafana alert rules, got $rules"
+          curl -fsS -u "admin:$GP" localhost:13000/api/v1/provisioning/folders \
+            | grep -q '"title": *"Platform"' || fail "bundled rules did not land in the Platform folder"
+          echo "grafana alerting OK ($rules rules)"
+
+          # Same gating check as the dashboards above: each rule pack follows the
+          # component it watches.
+          kubectl -n observability get configmap \
+            lgtm-alert-otel-collector lgtm-alert-loki lgtm-alert-prometheus lgtm-alert-tempo >/dev/null \
+            || fail "a bundled alert rule ConfigMap is missing (gating regression)"
+          echo "bundled alert rule ConfigMaps present"
+
+          # A rule whose query cannot execute reports health=error. This is what
+          # catches PromQL that references a metric or label this stack does not
+          # actually produce.
+          bad=$(curl -fsS -u "admin:$GP" 'localhost:13000/api/prometheus/grafana/api/v1/rules' \
+            | python3 -c 'import json,sys; print(" ".join(r["name"] for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"] if r.get("health") == "error"))')
+          [ -z "$bad" ] || fail "alert rules failing to evaluate: $bad"
+          echo "no alert rules in error state"
+
       - name: Check collectors for steady-state errors
         run: |
           # Startup races (target allocator not up yet) log errors in the

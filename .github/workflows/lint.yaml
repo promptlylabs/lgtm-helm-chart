@@ -18,6 +18,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
 
+      # validate_alerts.py parses the rendered provisioning YAML.
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
       - name: Check generated values.yaml is in sync with values.d/
         run: make check-values
 
@@ -28,6 +32,11 @@ jobs:
       # `ct lint`, whose internal `helm dependency build` needs the repos.
       - name: Build chart dependencies
         run: make deps
+
+      # Renders templates/grafana/alerting.yaml and checks every rule is valid
+      # Grafana provisioning (apiVersion 1, A/B/C triple, resolvable datasource).
+      - name: Validate Grafana alert rules
+        run: make validate-alerts
 
       - name: Set up chart-testing
         uses: helm/chart-testing-action@v2.8.0
@@ -162,6 +171,93 @@ jobs:
           echo "$out" | grep -q 'queue-permissions' && { echo "SELinux overlay must not render a chown initContainer"; exit 1; }
           helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-baremetal.yaml -f charts/lgtm/examples/values-selinux.yaml > /dev/null
           echo "SELinux overlay wiring OK"
+
+      # Grafana unified-alerting HA (ADR-0015). The wiring is unconditional, so it
+      # must render identically at one replica and at two, and must NOT duplicate
+      # the POD_IP env var the Grafana chart already injects itself.
+      - name: Helm template (Grafana alerting HA — assert wiring)
+        run: |
+          # $2.. are the extra flags the two-replica case needs for the HA guard.
+          assert_ha () {
+            n="$1"; shift
+            cm=$(helm template lgtm charts/lgtm/ --namespace observability --set grafana.replicas="$n" "$@" \
+              --show-only charts/grafana/templates/configmap.yaml)
+            echo "$cm" | grep -q '\[unified_alerting\]'                               || { echo "replicas=$n: missing [unified_alerting] section"; exit 1; }
+            echo "$cm" | grep -q 'ha_peers = grafana-headless.observability.svc:9094' || { echo "replicas=$n: ha_peers must resolve to the headless Service in the release namespace"; exit 1; }
+            echo "$cm" | grep -q 'ha_listen_address = \$__env{POD_IP}:9094'            || { echo "replicas=$n: ha_listen_address must expand POD_IP via Grafana's own \$__env"; exit 1; }
+            echo "$cm" | grep -q 'ha_advertise_address = \$__env{POD_IP}:9094'         || { echo "replicas=$n: missing ha_advertise_address"; exit 1; }
+          }
+          assert_ha 1
+          assert_ha 2 --set 'grafana.grafana\.ini.database.type=postgres'
+          svc=$(helm template lgtm charts/lgtm/ --namespace observability --show-only charts/grafana/templates/headless-service.yaml)
+          echo "$svc" | grep -q 'clusterIP: None' || { echo "the gossip peer Service must be headless"; exit 1; }
+          echo "$svc" | grep -q 'port: 9094'      || { echo "the gossip peer Service must expose 9094"; exit 1; }
+          # The Grafana chart injects POD_IP itself; adding our own would duplicate it.
+          pod_ips=$(helm template lgtm charts/lgtm/ --namespace observability \
+            --show-only charts/grafana/templates/deployment.yaml | grep -c 'name: POD_IP')
+          [ "$pod_ips" = 1 ] || { echo "expected exactly 1 POD_IP env entry, got $pod_ips"; exit 1; }
+          # A consumer's own envValueFrom keys must survive untouched.
+          az=$(helm template lgtm charts/lgtm/ --namespace observability -f charts/lgtm/examples/values-azure.yaml \
+            --show-only charts/grafana/templates/deployment.yaml)
+          for k in GF_DATABASE_PASSWORD GF_AUTH_AZUREAD_CLIENT_ID GF_SMTP_USER; do
+            echo "$az" | grep -q "$k" || { echo "consumer envValueFrom key $k was dropped"; exit 1; }
+          done
+          echo "Grafana alerting HA wiring OK"
+
+      # Both branches of the HA guard must fire, and neither may false-positive on
+      # a correctly-configured install.
+      - name: Helm template (Grafana HA guard — assert it fails loudly)
+        run: |
+          must_fail() {
+            if helm template lgtm charts/lgtm/ --namespace observability "$@" > /dev/null 2>&1; then
+              echo "expected a render failure for: $*"; exit 1
+            fi
+          }
+          must_succeed() {
+            helm template lgtm charts/lgtm/ --namespace observability "$@" > /dev/null \
+              || { echo "unexpected render failure for: $*"; exit 1; }
+          }
+          # replicas > 1 with the default ephemeral SQLite: HA alerting cannot work.
+          must_fail --set grafana.replicas=2
+          # replicas > 1 with the gossip ring emptied out.
+          must_fail --set grafana.replicas=2 --set 'grafana.grafana\.ini.database.type=postgres' \
+                    --set 'grafana.grafana\.ini.unified_alerting.ha_peers='
+          # The guard is inert at one replica, and accepts a real shared database
+          # whether it is configured in grafana.ini or through the environment.
+          must_succeed --set grafana.replicas=1
+          must_succeed --set grafana.replicas=2 --set 'grafana.grafana\.ini.database.type=postgres'
+          must_succeed --set grafana.replicas=2 --set grafana.env.GF_DATABASE_TYPE=postgres
+          must_succeed -f charts/lgtm/examples/values-azure.yaml --set grafana.replicas=2
+          echo "Grafana HA guard OK"
+
+      # Bundled alert rules are gated per component exactly like the dashboards,
+      # and the whole renderer is off when lgtm.alerting.enabled is false.
+      - name: Helm template (alert rules — assert gating)
+        run: |
+          names() { helm template lgtm charts/lgtm/ --namespace observability "$@" \
+            --show-only templates/grafana/alerting.yaml 2>/dev/null | grep '^  name: lgtm-alert'; }
+          def=$(names)
+          for c in otel-collector loki prometheus tempo; do
+            echo "$def" | grep -q "lgtm-alert-$c" || { echo "missing bundled rule pack $c"; exit 1; }
+          done
+          off=$(helm template lgtm charts/lgtm/ --namespace observability --set lgtm.alerting.enabled=false)
+          echo "$off" | grep -q 'name: lgtm-alert'     && { echo "alerting disabled must render no rule ConfigMaps"; exit 1; }
+          echo "$off" | grep -q 'name: lgtm-alerting-' && { echo "alerting disabled must render no provisioning ConfigMaps"; exit 1; }
+          names --set loki.enabled=false | grep -q 'lgtm-alert-loki' && { echo "loki rules should follow loki.enabled"; exit 1; }
+          names --set 'lgtm.alerting.exclude={tempo}' | grep -q 'lgtm-alert-tempo' && { echo "exclude should drop tempo by basename"; exit 1; }
+          # Contact points and policies gate together: a policy routing to a receiver
+          # Grafana has never seen fails provisioning outright.
+          pol=$(helm template lgtm charts/lgtm/ --namespace observability \
+            --set-json 'lgtm.alerting.policies=[{"orgId":1,"receiver":"nope"}]' \
+            --show-only templates/grafana/alerting.yaml 2>/dev/null)
+          echo "$pol" | grep -q 'lgtm-alerting-policies' && { echo "policies without contactPoints must not be provisioned"; exit 1; }
+          both=$(helm template lgtm charts/lgtm/ --namespace observability \
+            --set-json 'lgtm.alerting.contactPoints=[{"orgId":1,"name":"cp","receivers":[{"uid":"u","type":"email","settings":{"addresses":"a@b.c"}}]}]' \
+            --set-json 'lgtm.alerting.policies=[{"orgId":1,"receiver":"cp"}]' \
+            --show-only templates/grafana/alerting.yaml)
+          echo "$both" | grep -q 'lgtm-alerting-policies'      || { echo "policies should render alongside contactPoints"; exit 1; }
+          echo "$both" | grep -q 'lgtm-alerting-contactpoints' || { echo "contactPoints should render"; exit 1; }
+          echo "alert rule gating OK"
 
       - name: Set up kubeconform
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0

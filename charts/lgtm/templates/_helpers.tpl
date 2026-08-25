@@ -194,3 +194,117 @@ targeting Prometheus directly — Query is read-only.
 {{- include "lgtm.prometheus.endpoint" . -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Grafana unified-alerting HA validation.
+
+Alerting is Grafana-managed and on by default, so more than one Grafana replica
+means more than one Alertmanager unless they are wired into a gossip ring. The
+chart wires that ring in values.d/30-grafana.yaml (headlessService + the
+grafana.ini [unified_alerting] block), but nothing stops a consumer replacing
+that block wholesale — sub-chart values deep-merge per key, and re-declaring
+`unified_alerting` drops what we set. This fails the render instead of shipping
+a stack that double-notifies.
+
+Two checks, both inert at one replica:
+
+  1. ha_peers must be set. The chart sets it, so empty means it was overridden.
+  2. There must be a shared database. Grafana's HA Alertmanager requires every
+     replica to read the same database, and this chart defaults to per-pod
+     ephemeral SQLite — so the gossip ring alone is not enough.
+
+The database check is deliberately permissive: it accepts grafana.ini's own
+[database] block, a GF_DATABASE_* env override, or any opaque envFrom source we
+cannot introspect. A false pass is a consumer's problem to debug; a false
+failure would block a correctly-configured install.
+
+Included from templates/validations.yaml, which renders on every pass.
+*/}}
+{{- define "lgtm.grafana.validateAlertingHA" -}}
+{{- if and .Values.grafana.enabled (gt (int (.Values.grafana.replicas | default 1)) 1) -}}
+{{- $ini := index .Values.grafana "grafana.ini" | default dict -}}
+{{- $ua := get $ini "unified_alerting" | default dict -}}
+{{- if not (get $ua "ha_peers") -}}
+{{- fail (printf "grafana.replicas is %v but grafana.grafana\\.ini.unified_alerting.ha_peers is empty. The chart sets it by default, so an empty value means the unified_alerting block was overridden — re-declaring a sub-chart key replaces it rather than merging into it. Without a gossip ring every replica runs its own Alertmanager and every alert notifies once per replica. Restore ha_peers (see values.d/30-grafana.yaml) or set grafana.replicas back to 1." (.Values.grafana.replicas)) -}}
+{{- end -}}
+{{- $db := get $ini "database" | default dict -}}
+{{- $env := .Values.grafana.env | default dict -}}
+{{- $shared := or (has (get $db "type" | toString) (list "mysql" "postgres")) (hasKey $env "GF_DATABASE_TYPE") (hasKey $env "GF_DATABASE_URL") .Values.grafana.envFromSecret .Values.grafana.envFromSecrets .Values.grafana.envFromConfigMaps -}}
+{{- if not $shared -}}
+{{- fail (printf "grafana.replicas is %v but no shared database is configured. Grafana's HA alerting requires every replica to share one database, and this chart defaults to per-pod ephemeral SQLite — each replica would keep its own alert state, silences and dashboards. Point grafana.grafana\\.ini.database at an external MySQL/PostgreSQL (examples/values-azure.yaml shows the PostgreSQL pattern) or set grafana.replicas back to 1." (.Values.grafana.replicas)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Grafana-managed alert rule query — the A/B/C data[] triple (ADR-0015).
+
+Every bundled rule in alerts/ is the same shape: run one instant PromQL query,
+reduce it to its last value, compare that to a threshold. Emitting it from here
+keeps each rule down to its title, its expression and its annotations.
+
+  A  instant PromQL against lgtm.alerting.datasourceUid
+  B  reduce(last) over A
+  C  threshold: B > `threshold` (default 0)
+
+CONVENTION: write the PromQL so that a POSITIVE VALUE MEANS BAD. Every bundled
+rule is then `gt 0` with no per-rule operator, and a rule reads the same way in
+the file as it does in the Grafana UI. For "should be present but isn't", use
+absent() — it yields 1 exactly when the series is missing, which is the same
+polarity and never lands in NoData.
+
+Takes a dict:
+  root       (required) the root context
+  expr       (required) the PromQL for A
+  threshold  (optional) evaluator parameter for C, default 0
+  from       (optional) relativeTimeRange lookback in seconds, default 600
+
+Include at the `data:` key's indent, e.g. with nindent 10.
+*/}}
+{{- define "lgtm.alerting.query" -}}
+{{- $root := .root -}}
+- refId: A
+  relativeTimeRange:
+    from: {{ .from | default 600 }}
+    to: 0
+  datasourceUid: {{ $root.Values.lgtm.alerting.datasourceUid | quote }}
+  model:
+    refId: A
+    editorMode: code
+    instant: true
+    range: false
+    expr: {{ .expr | quote }}
+- refId: B
+  datasourceUid: __expr__
+  model:
+    refId: B
+    type: reduce
+    reducer: last
+    expression: A
+- refId: C
+  datasourceUid: __expr__
+  model:
+    refId: C
+    type: threshold
+    expression: B
+    conditions:
+      - evaluator:
+          type: gt
+          params: [{{ .threshold | default 0 }}]
+{{- end -}}
+
+{{/*
+Labels for a bundled alert rule: the rule's own labels with
+lgtm.alerting.commonLabels merged over them, so consumers can tag every shipped
+rule for routing without editing any of them.
+
+commonLabels wins on a key collision: the rule's own labels are the chart's
+default, and an explicit consumer setting should beat a chart default.
+
+Takes a dict: `root` (the root context) and `labels` (the rule's own map).
+Include at the `labels:` key's indent, e.g. with nindent 10.
+*/}}
+{{- define "lgtm.alerting.labels" -}}
+{{- $common := .root.Values.lgtm.alerting.commonLabels | default dict -}}
+{{- toYaml (mergeOverwrite (dict) (.labels | default dict) $common) -}}
+{{- end -}}
