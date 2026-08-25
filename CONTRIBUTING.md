@@ -6,7 +6,7 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## Prerequisites
 
-You will need: [`helm`](https://helm.sh/) (v3), `python3`, [`kubectl`](https://kubernetes.io/docs/tasks/tools/), [`kind`](https://kind.sigs.k8s.io/) (to reproduce the smoke test locally), [`pre-commit`](https://pre-commit.com/), [`kubeconform`](https://github.com/yannh/kubeconform), and [`ct` (chart-testing)](https://github.com/helm/chart-testing). Most are available via Homebrew (`brew install helm kind kubeconform chart-testing pre-commit`).
+You will need: [`helm`](https://helm.sh/) (v3), `python3` with [PyYAML](https://pyyaml.org/) (`pip install pyyaml`, used by `make validate-alerts`), [`kubectl`](https://kubernetes.io/docs/tasks/tools/), [`kind`](https://kind.sigs.k8s.io/) (to reproduce the smoke test locally), [`pre-commit`](https://pre-commit.com/), [`kubeconform`](https://github.com/yannh/kubeconform), and [`ct` (chart-testing)](https://github.com/helm/chart-testing). Most are available via Homebrew (`brew install helm kind kubeconform chart-testing pre-commit`).
 
 ## How this chart is built
 

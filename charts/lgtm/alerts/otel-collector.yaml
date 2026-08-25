@@ -1,0 +1,144 @@
+{{- /*
+Collector and Target Allocator health (ADR-0015).
+
+Rendered through `tpl`, so this file can use the shared lgtm.alerting.query
+helper and gate individual rules on chart values. PromQL convention: a POSITIVE
+value means bad, so every rule is a `gt` against the helper's threshold.
+
+Thresholds are taken from the red step of the matching panel in
+dashboards/otel-collector.json rather than invented.
+
+The Target Allocator rule is the reason this pack exists. Each allocator is a
+separate Deployment whose health is NOT reflected in the parent
+OpenTelemetryCollector CR status, so an ArgoCD Application reports Healthy right
+through an allocator crashloop, and there is no liveness probe that would catch
+it either — the restart count is the only honest signal (see ADR-0014 and the
+README's Operations section). We have seen this hide a node-allocator crashloop
+for 8 days and ~1800 restarts while every ServiceMonitor in the cluster silently
+flapped in and out of the scrape set.
+
+Note the shape of the multi-signal rules: one sum() per metric name, combined
+with +, never a single rate({__name__=~"a|b"}) selector. rate() strips __name__
+from its output, so a regex matching two metric names that a receiver emits for
+the same labelset — the otlp receiver reports refusals for metrics AND logs
+under one `receiver` label — produces a vector with duplicate labelsets and
+Prometheus errors with "vector cannot contain metrics with the same labelset".
+A rule in that state reports health=error and never fires, which is the worst
+possible failure for a guard. `or vector(0)` on each term keeps a missing metric
+from blanking the whole expression.
+
+k8s.container.restarts comes from the cluster collector's k8s_cluster receiver
+and is a dotted OTel name (translationStrategy: NoTranslation), hence the quoted
+PromQL selector. `delta` rather than `increase` because it is a gauge. We do not
+use k8s.container.status.reason, though the chart enables it: an OOMKilled or
+CrashLoopBackOff container restarts too, so restarts already covers both, and
+that metric carries its reason as a *data-point* attribute whose label spelling
+under NoTranslation is not exercised anywhere else in this chart.
+*/ -}}
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: lgtm-otel-collector
+    folder: {{ .Values.lgtm.alerting.folder | quote }}
+    interval: {{ .Values.lgtm.alerting.interval | quote }}
+    rules:
+      - uid: lgtm-otelcol-targetallocator-restarting
+        title: OTel Target Allocator restarting
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: A collector Target Allocator is crashlooping
+          description: >-
+            {{ `{{ $labels.k8s_pod_name }}` }} has restarted more than twice in the last hour.
+            Scrape targets flap in and out of the collector's scrape set while this lasts, so
+            ServiceMonitor-based metrics across the whole cluster go intermittently missing.
+            The allocator's health is not reflected in the OpenTelemetryCollector CR status —
+            check `kubectl -n {{ .Release.Namespace }} logs pod/{{ `{{ $labels.k8s_pod_name }}` }}`
+            and its memory limit (collectors.<node|cluster>.targetAllocator.resources).
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "otel-collector")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 2 "from" 3600 "expr" `max by (k8s_pod_name) (delta({"k8s.container.restarts", k8s_pod_name=~"otel-(node|cluster)-collector-targetallocator-.+"}[1h]))`) | nindent 10 }}
+
+      - uid: lgtm-otelcol-exporter-failures
+        title: OTel collector failing to export telemetry
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: A collector is dropping telemetry on export
+          description: >-
+            Spans, metric points or log records are failing to send to their backend. Sustained
+            failures fill the sending queue and then drop data. Check the backend's own alerts
+            first, then the collector logs. The OTel Collector dashboard breaks this down by
+            collector and signal.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `(sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_metric_points_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_log_records_total[5m])) or vector(0))`) | nindent 10 }}
+
+      - uid: lgtm-otelcol-queue-near-capacity
+        title: OTel collector sending queue near capacity
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Collector {{ `{{ $labels.service }}` }} sending queue is over 90% full
+          description: >-
+            A full queue drops new batches. Usually the backend is slow or down; if it is not,
+            the queue is undersized for the volume.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.9 "expr" `max by (service) (otelcol_exporter_queue_size) / clamp_min(max by (service) (otelcol_exporter_queue_capacity), 1)`) | nindent 10 }}
+
+{{- range $signal := (list (dict "kind" "metric_points" "noun" "metric points") (dict "kind" "log_records" "noun" "log records")) }}
+
+      - uid: lgtm-otelcol-refusing-{{ $signal.kind | replace "_" "-" }}
+        title: OTel collector refusing incoming {{ $signal.noun }}
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: A collector is refusing over 5% of incoming {{ $signal.noun }}
+          description: >-
+            The receiver is rejecting {{ $signal.noun }} — most often memory_limiter backpressure,
+            which means the collector is undersized for the volume it is being sent.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" $ "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" $ "threshold" 0.05 "expr" (printf `sum(rate(otelcol_receiver_refused_%s_total[5m])) / clamp_min(sum(rate(otelcol_receiver_accepted_%s_total[5m])) + sum(rate(otelcol_receiver_refused_%s_total[5m])), 1)` $signal.kind $signal.kind $signal.kind)) | nindent 10 }}
+{{- end }}
+{{- range $collector := (list "node" "cluster") }}
+{{- if (index $.Values.collectors $collector).enabled }}
+
+      - uid: lgtm-otelcol-{{ $collector }}-absent
+        title: OTel {{ $collector }} collector reporting no self-metrics
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: The {{ $collector }} collector has stopped reporting
+          description: >-
+            No otelcol_* self-metrics from otel-{{ $collector }}-collector for 15 minutes — the
+            collector is down, or the pipeline that scrapes and pushes its self-metrics is.
+            Either way the other collector alerts in this group are blind until it returns.
+            Note this is expected when lgtm.metaMonitoring.enabled is true, which reserves the
+            stack's own ServiceMonitors for a separate meta-monitoring stack.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" $ "labels" (dict "severity" "critical" "component" "otel-collector")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" $ "expr" (printf `absent(otelcol_process_uptime_seconds_total{service="otel-%s-collector"})` $collector)) | nindent 10 }}
+{{- end }}
+{{- end }}

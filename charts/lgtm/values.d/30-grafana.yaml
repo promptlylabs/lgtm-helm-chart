@@ -13,6 +13,12 @@ grafana:
 
   replicas: 1
 
+  # Peer Service for the unified-alerting gossip ring (see grafana.ini below).
+  # Headless, so DNS returns the pod IPs memberlist needs. Rendered
+  # unconditionally: at replicas: 1 it is one more ClusterIP-less Service and
+  # nothing else.
+  headlessService: true
+
   resources:
     requests:
       cpu: 25m
@@ -66,3 +72,28 @@ grafana:
       viewers_can_edit: true
     analytics:
       check_for_updates: false
+
+    # ── Unified-alerting HA ──────────────────────────────────────────────────
+    # Alerting is Grafana-managed and on by default, so a second replica would
+    # otherwise run a second, independent Alertmanager and every rule would
+    # notify twice. Helm cannot set sub-chart values conditionally from a parent
+    # template, so this is wired unconditionally — at replicas: 1 it is a single
+    # peer gossiping with itself, which is a no-op.
+    #
+    # POD_IP is injected by the Grafana chart itself as the first env var of the
+    # container (fieldRef status.podIP), so `$__env{}` — Grafana's own config
+    # expansion — resolves it without any envValueFrom of ours.
+    #
+    # ha_peers is templated: the sub-chart runs every grafana.ini string through
+    # `tpl`, so the address tracks fullnameOverride and namespaceOverride instead
+    # of hard-coding grafana-headless.observability.svc.
+    #
+    # NOT SUFFICIENT ON ITS OWN: Grafana's HA Alertmanager also requires every
+    # replica to share ONE database, and the default here is per-pod ephemeral
+    # SQLite. Scaling past one replica needs an external database too — see
+    # examples/values-azure.yaml. templates/validations.yaml fails the render if
+    # you raise replicas without both halves in place.
+    unified_alerting:
+      ha_listen_address: "$__env{POD_IP}:9094"
+      ha_advertise_address: "$__env{POD_IP}:9094"
+      ha_peers: '{{ include "grafana.fullname" . }}-headless.{{ include "grafana.namespace" . }}.svc:9094'

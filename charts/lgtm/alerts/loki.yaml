@@ -1,0 +1,103 @@
+{{- /*
+Loki ingest, query and storage health (ADR-0015).
+
+Loki runs Monolithic here (ADR-0004), so there is no distributor/ingester/querier
+split to select on — every metric comes from the single `loki` target.
+
+Expressions and thresholds mirror dashboards/loki.json: the route-exclusion
+idiom, the OTLP route label value (route="otlp_v1_logs"), the status_code label
+(not status/code), and the WAL panel's 0.9 red step on a 0-1 fraction. Ratios
+divide by clamp_min(..., 1) exactly as the dashboard does, which deliberately
+keeps low-traffic noise from firing.
+*/ -}}
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: lgtm-loki
+    folder: {{ .Values.lgtm.alerting.folder | quote }}
+    interval: {{ .Values.lgtm.alerting.interval | quote }}
+    rules:
+      - uid: lgtm-loki-otlp-ingest-errors
+        title: Loki rejecting OTLP log ingest
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Over 5% of OTLP log pushes to Loki are failing
+          description: >-
+            The collectors' log pipeline is losing data at the door. Common causes are per-tenant
+            ingestion limits and out-of-order or too-old timestamps; the reason is in Loki's logs.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.05 "expr" `sum(rate(loki_request_duration_seconds_count{route="otlp_v1_logs",status_code=~"5.."}[5m])) / clamp_min(sum(rate(loki_request_duration_seconds_count{route="otlp_v1_logs"}[5m])), 1)`) | nindent 10 }}
+
+      - uid: lgtm-loki-request-errors
+        title: Loki returning server errors
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Over 5% of Loki requests are returning 5xx
+          description: >-
+            Reads, writes or both are failing. Check Loki's logs and the Loki dashboard's latency
+            panels — this often follows storage or memory pressure rather than a Loki bug.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.05 "expr" `sum(rate(loki_request_duration_seconds_count{route!~"ready|metrics|.*Health.*|.*buildinfo",status_code=~"5.."}[5m])) / clamp_min(sum(rate(loki_request_duration_seconds_count{route!~"ready|metrics|.*Health.*|.*buildinfo"}[5m])), 1)`) | nindent 10 }}
+
+      - uid: lgtm-loki-chunk-flush-failures
+        title: Loki failing to flush chunks
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Loki cannot flush chunks to storage
+          description: >-
+            Unflushed chunks stay in ingester memory and are lost if the pod restarts. Check the
+            storage backend (filesystem PVC by default, object storage on the cloud overlays).
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(loki_ingester_chunks_flush_failures_total[5m]))`) | nindent 10 }}
+
+      - uid: lgtm-loki-wal-disk-usage
+        title: Loki WAL disk usage high
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Loki's write-ahead log is over 90% of its disk
+          description: >-
+            A full WAL disk stops ingestion outright. Either the volume is undersized or chunks
+            are not flushing (see the chunk-flush alert in this group).
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.9 "expr" `max(loki_ingester_wal_disk_usage_percent)`) | nindent 10 }}
+
+      - uid: lgtm-loki-absent
+        title: Loki not reporting
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: No healthy Loki target
+          description: >-
+            No Loki scrape target has reported up=1 for 15 minutes — Loki is down, or the
+            collectors have stopped scraping it. Logs are not being stored either way.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `absent(up{job=~".*loki.*"} == 1)`) | nindent 10 }}

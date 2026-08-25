@@ -1,0 +1,100 @@
+{{- /*
+Grafana-managed alerting, provisioned as ConfigMaps the Grafana alerts sidecar
+picks up (label grafana_alert: "1", any namespace). Mirrors dashboards.yaml.
+
+Two halves:
+
+  1. Pass-through — lgtm.alerting.{contactPoints,policies,templates} are emitted
+     verbatim, one ConfigMap each, skipped when empty. The chart ships none:
+     contact points are site-specific and belong in the consuming release.
+     Policies additionally require contactPoints to be non-empty, because a
+     policy routing to a receiver Grafana has never seen fails provisioning and
+     takes the rest of the file with it.
+
+  2. Bundled rules — one ConfigMap per alerts/*.yaml. $gate maps a rule file's
+     basename to the component it watches, so a rule pack is only provisioned
+     when that component is in the release; lgtm.alerting.exclude drops files by
+     basename. Same shape as the dashboards $gate map.
+
+Unlike dashboards, the rule files are run through `tpl`: they call the shared
+lgtm.alerting.query helper for the A/B/C data[] triple, which is what keeps each
+rule down to its title, expression and annotations. Consequence for anyone
+editing alerts/*.yaml — Grafana's own templating must be escaped from Helm, e.g.
+{{ `{{ $labels.pod }}` }}.
+
+Note there is no grafana_folder annotation here: the alerts sidecar has no
+folderAnnotation, so the folder is named inside the provisioning file itself.
+*/ -}}
+{{- if .Values.lgtm.alerting.enabled }}
+{{- $alerting := .Values.lgtm.alerting }}
+{{- if $alerting.contactPoints }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-alerting-contactpoints
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_alert: "1"
+    {{- include "lgtm.labels" . | nindent 4 }}
+data:
+  contactpoints.yaml: |-
+    apiVersion: 1
+    contactPoints:
+{{ toYaml $alerting.contactPoints | indent 6 }}
+{{- end }}
+{{- if and $alerting.policies $alerting.contactPoints }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-alerting-policies
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_alert: "1"
+    {{- include "lgtm.labels" . | nindent 4 }}
+data:
+  policies.yaml: |-
+    apiVersion: 1
+    policies:
+{{ toYaml $alerting.policies | indent 6 }}
+{{- end }}
+{{- if $alerting.templates }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-alerting-templates
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_alert: "1"
+    {{- include "lgtm.labels" . | nindent 4 }}
+data:
+  templates.yaml: |-
+    apiVersion: 1
+    templates:
+{{ toYaml $alerting.templates | indent 6 }}
+{{- end }}
+{{- $gate := dict
+  "otel-collector" .Values.collectors.enabled
+  "loki"           .Values.loki.enabled
+  "prometheus"     (index .Values "kube-prometheus-stack" "enabled")
+  "tempo"          .Values.tempo.enabled }}
+{{- range $path, $_ := .Files.Glob "alerts/*.yaml" }}
+{{- $name := base $path | trimSuffix ".yaml" }}
+{{- if and (not (has $name $.Values.lgtm.alerting.exclude)) (or (not (hasKey $gate $name)) (index $gate $name)) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-alert-{{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_alert: "1"
+    {{- include "lgtm.labels" $ | nindent 4 }}
+data:
+  {{ base $path }}: |-
+{{ tpl ($.Files.Get $path) $ | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

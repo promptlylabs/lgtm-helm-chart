@@ -1,0 +1,7 @@
+{{- /*
+Render-time validation. Emits no manifests — it exists so the guards below run
+on every render, not only when the resource they protect happens to be enabled.
+NOTES.txt would not do: `helm template` skips it, so CI would never see a
+failure.
+*/ -}}
+{{- include "lgtm.grafana.validateAlertingHA" . -}}

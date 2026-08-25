@@ -1,6 +1,6 @@
 CHART := charts/lgtm
 
-.PHONY: values check-values deps lint validate-dashboards template kubeconform docs-validate all
+.PHONY: values check-values deps lint validate-dashboards validate-alerts template kubeconform docs-validate all
 
 ## Assemble charts/lgtm/values.yaml from values.d/ fragments
 values:
@@ -18,12 +18,17 @@ deps:
 	helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update
 	helm dependency build $(CHART)
 
-lint: check-values validate-dashboards
+lint: check-values validate-dashboards validate-alerts
 	helm lint $(CHART)
 
 ## Validate Grafana dashboard JSON (well-formed + datasource refs resolve)
 validate-dashboards:
 	python3 scripts/validate_dashboards.py
+
+## Validate the rendered Grafana alert rules (provisioning schema + datasource refs).
+## Needs PyYAML and chart dependencies (`make deps`) — the rule files are templates.
+validate-alerts:
+	python3 scripts/validate_alerts.py
 
 ## Render the chart in the default, collectors-off, and every example configuration
 template: check-values

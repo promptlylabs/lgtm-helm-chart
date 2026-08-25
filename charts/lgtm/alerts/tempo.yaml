@@ -1,0 +1,88 @@
+{{- /*
+Tempo ingest, query and compaction health (ADR-0015).
+
+Tempo runs single-binary here, and this dashboard set exposes no first-class
+push-error counter — distributor health is visible through
+tempo_request_duration_seconds_count broken out by status_code, which is what
+dashboards/tempo.json uses and what these rules use too. Note the `tempodb_`
+prefix (no underscore after tempo) on the compaction metric.
+
+The metrics-generator alert matters more than it looks: it is what produces
+span metrics and service graphs, and it remote-writes them to Prometheus. When
+its local blocks stop flushing, those panels go quiet without Tempo itself
+looking unhealthy.
+*/ -}}
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: lgtm-tempo
+    folder: {{ .Values.lgtm.alerting.folder | quote }}
+    interval: {{ .Values.lgtm.alerting.interval | quote }}
+    rules:
+      - uid: lgtm-tempo-request-errors
+        title: Tempo returning server errors
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Over 5% of Tempo requests are returning 5xx
+          description: >-
+            Trace ingest or trace queries are failing. Check Tempo's logs and its storage
+            backend; ingest failures mean spans the collectors sent are being lost.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "tempo")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.05 "expr" `sum(rate(tempo_request_duration_seconds_count{route!~"ready|metrics",status_code=~"5.."}[5m])) / clamp_min(sum(rate(tempo_request_duration_seconds_count{route!~"ready|metrics"}[5m])), 1)`) | nindent 10 }}
+
+      - uid: lgtm-tempo-compaction-errors
+        title: Tempo compaction failing
+        condition: C
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Tempo cannot compact blocks
+          description: >-
+            The block list grows unbounded and query latency degrades with it. Usually a storage
+            backend problem rather than Tempo itself.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "tempo")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(tempodb_compaction_errors_total[15m]))`) | nindent 10 }}
+
+      - uid: lgtm-tempo-metricsgen-flush-failures
+        title: Tempo metrics-generator failing to flush
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Tempo's metrics-generator cannot flush its local blocks
+          description: >-
+            Span metrics and service graphs stop updating, so the RED panels and the service map
+            go stale — while Tempo's own trace ingest keeps looking healthy.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "tempo")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(tempo_metrics_generator_processor_local_blocks_failed_flushes_total[15m]))`) | nindent 10 }}
+
+      - uid: lgtm-tempo-absent
+        title: Tempo not reporting
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: No healthy Tempo target
+          description: >-
+            No Tempo scrape target has reported up=1 for 15 minutes — Tempo is down, or the
+            collectors have stopped scraping it. Traces are not being stored either way.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "tempo")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `absent(up{job=~".*tempo.*"} == 1)`) | nindent 10 }}
