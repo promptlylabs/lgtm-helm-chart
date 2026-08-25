@@ -10,7 +10,14 @@ the chart first and validates what the alerts sidecar would actually be handed:
   3. every rule has the A/B/C data[] triple with condition: C;
   4. every non-expression datasourceUid resolves to a datasource this chart
      provisions (templates/grafana/datasources.yaml);
-  5. rule uids and titles are unique across the whole pack.
+  5. rule uids and titles are unique across the whole pack;
+  6. every uid obeys Grafana's own limits (<=40 characters, [A-Za-z0-9_-]).
+
+Point 6 is not pedantry. Grafana treats a provisioning failure at startup as
+FATAL: it refuses to boot, so a single over-long uid in a ConfigMap crashloops
+Grafana and takes the whole observability UI with it. That is exactly how this
+check earned its place — a 43-character uid shipped, and the only thing that
+caught it was nine minutes into the kind smoke test.
 
 Runtime coverage (do the queries return anything?) is the smoke test's job.
 
@@ -18,6 +25,7 @@ Usage:
     python3 scripts/validate_alerts.py
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +39,14 @@ CHART_DIR = REPO_ROOT / "charts" / "lgtm"
 KNOWN_DATASOURCES = {"prometheus", "loki", "tempo", "pyroscope"}
 
 EXPR_DATASOURCE = "__expr__"
+
+# Grafana rejects longer uids outright, and rejects the whole provisioning file
+# with them — which at startup means it does not boot at all.
+MAX_UID_LENGTH = 40
+UID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# Grafana's own column limit for the rule title.
+MAX_TITLE_LENGTH = 190
 
 
 def render() -> str:
@@ -84,15 +100,34 @@ def main() -> None:
                         errors.append(f"{where}: duplicate rule uid {uid!r} (also in {uids[uid]})")
                     uids[uid] = where
 
+                    if len(uid) > MAX_UID_LENGTH:
+                        errors.append(
+                            f"{where}: rule uid {uid!r} is {len(uid)} characters; Grafana's limit "
+                            f"is {MAX_UID_LENGTH}. Provisioning fails at startup, so Grafana will "
+                            "not boot at all"
+                        )
+                    if not UID_PATTERN.match(uid):
+                        errors.append(f"{where}: rule uid {uid!r} must match [A-Za-z0-9_-]+")
+
                     title = rule.get("title")
                     if title in titles:
                         errors.append(f"{where}: duplicate rule title {title!r} (also in {titles[title]})")
                     titles[title] = where
 
+                    if not title:
+                        errors.append(f"{where}/{uid}: rule has no title")
+                    elif len(title) > MAX_TITLE_LENGTH:
+                        errors.append(
+                            f"{where}/{uid}: title is {len(title)} characters; Grafana's limit is "
+                            f"{MAX_TITLE_LENGTH}"
+                        )
+
                     if ref_ids != ["A", "B", "C"]:
                         errors.append(f"{where}/{uid}: expected data refIds [A, B, C], got {ref_ids}")
                     if rule.get("condition") != "C":
                         errors.append(f"{where}/{uid}: condition must be C, got {rule.get('condition')!r}")
+                    elif "C" not in ref_ids:
+                        errors.append(f"{where}/{uid}: condition C has no matching entry in data[]")
 
                     for datum in rule.get("data", []):
                         ds = datum.get("datasourceUid")

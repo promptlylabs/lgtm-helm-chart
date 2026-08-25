@@ -143,3 +143,12 @@ failure this pack exists for.
 - `make validate-alerts` (`scripts/validate_alerts.py`) renders the chart and checks the
   provisioning schema and datasource references, mirroring what `validate_dashboards.py` does
   statically. It needs PyYAML and vendored sub-charts, so it runs after `make deps` in CI.
+- **Alerting provisioning is fatal at Grafana startup.** One invalid rule, in any namespace, and
+  Grafana exits rather than skipping the file — dashboards and datasources go with it. The failure
+  is also asymmetric: the hot-reload endpoint rejects a bad file harmlessly while Grafana is
+  running, so a rule that was merged happily can kill the pod on its next restart, long after the
+  change that introduced it. This is why `validate_alerts.py` checks Grafana's own constraints
+  (uid length and charset, title length) and not just the provisioning schema — the first version
+  of it did not, a 43-character uid shipped, and Grafana crashlooped in the smoke test. The chart
+  now encourages consumers to ship rules the same way, so the hazard is documented in the README
+  rather than left to be discovered.

@@ -53,7 +53,7 @@ groups:
         data:
           {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(tempodb_compaction_errors_total[15m]))`) | nindent 10 }}
 
-      - uid: lgtm-tempo-metrics-generator-flush-failures
+      - uid: lgtm-tempo-metricsgen-flush-failures
         title: Tempo metrics-generator failing to flush
         condition: C
         for: 15m

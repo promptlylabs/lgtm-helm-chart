@@ -307,7 +307,10 @@ jobs:
             | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           # Full default stack: 6 otel-collector + 5 loki + 5 prometheus + 4 tempo = 20.
           [ "$rules" -ge 20 ] || fail "expected >=20 provisioned Grafana alert rules, got $rules"
-          curl -fsS -u "admin:$GP" localhost:13000/api/v1/provisioning/folders \
+          # /api/folders, not /api/v1/provisioning/folders — the latter 404s
+          # (provisioning has no folders endpoint; the folder is created as a
+          # side effect of the rule group naming it).
+          curl -fsS -u "admin:$GP" localhost:13000/api/folders \
             | grep -q '"title": *"Platform"' || fail "bundled rules did not land in the Platform folder"
           echo "grafana alerting OK ($rules rules)"
 
@@ -320,10 +323,19 @@ jobs:
 
           # A rule whose query cannot execute reports health=error. This is what
           # catches PromQL that references a metric or label this stack does not
-          # actually produce.
-          bad=$(curl -fsS -u "admin:$GP" 'localhost:13000/api/prometheus/grafana/api/v1/rules' \
-            | python3 -c 'import json,sys; print(" ".join(r["name"] for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"] if r.get("health") == "error"))')
-          [ -z "$bad" ] || fail "alert rules failing to evaluate: $bad"
+          # actually produce. Rules need a couple of evaluation intervals to
+          # settle after provisioning, so poll rather than sampling once.
+          for i in $(seq 1 12); do
+            bad=$(curl -fsS -u "admin:$GP" 'localhost:13000/api/prometheus/grafana/api/v1/rules' \
+              | python3 -c 'import json,sys; print(" ".join(r["name"] for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"] if r.get("health") == "error"))')
+            [ -z "$bad" ] && break
+            sleep 10
+          done
+          if [ -n "$bad" ]; then
+            curl -fsS -u "admin:$GP" 'localhost:13000/api/prometheus/grafana/api/v1/rules' \
+              | python3 -c 'import json,sys; [print("  ", r["name"], "->", r.get("lastError", "")[:200]) for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"] if r.get("health") == "error"]' || true
+            fail "alert rules failing to evaluate: $bad"
+          fi
           echo "no alert rules in error state"
 
       - name: Check collectors for steady-state errors
