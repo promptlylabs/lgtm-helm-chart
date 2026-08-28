@@ -45,6 +45,15 @@ CrashLoopBackOff container restarts too, so restarts already covers both, and
 that metric carries its reason as a *data-point* attribute whose label spelling
 under NoTranslation is not exercised anywhere else in this chart.
 
+EXPORT FAILURES ARE WATCHED TWICE, on purpose. The rate([5m]) rule with for: 10m only
+catches SUSTAINED failure. A drop that arrives as one burst every 30 minutes — which is
+exactly the shape of the stale-k8s-event bug ADR-0016 fixes — keeps the rate non-zero for
+about five minutes, reaches Pending, and resets, forever. That rule sat over this bug for
+months and never fired. The burst rule is increase([30m]) with for: 0 so a single periodic
+drop is enough; its lookback is widened to from: 1800 to cover the range selector, as the
+Target Allocator rule does for its [1h]. Keep both: for: 0 alone would be noisy as the only
+export signal, and the 5m rate is what tells you a backend is down rather than flapping.
+
 COLLECTOR IDENTITY — select a collector with `job`, never `service`. Each
 collector sets service.telemetry.resource.service.name (see the collector
 templates); Prometheus rebuilds `job` from it on OTLP ingest, so job is exactly
@@ -99,6 +108,27 @@ groups:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:
           {{- include "lgtm.alerting.query" (dict "root" . "expr" `(sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_metric_points_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_log_records_total[5m])) or vector(0))`) | nindent 10 }}
+
+      - uid: lgtm-otelcol-export-drop-burst
+        title: OTel collector dropped telemetry in a burst
+        condition: C
+        # for: 0 — a periodic burst never survives a Pending window. See the header note.
+        for: 0
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: A collector dropped telemetry in the last 30 minutes
+          description: >-
+            At least one span, metric point or log record failed to send and was dropped. Unlike
+            the sustained-failure rule this fires on a single burst, which is how a periodic
+            rejection looks — e.g. a backend refusing a whole batch on one recurring cycle rather
+            than failing continuously. Check the collector logs for the backend's status code;
+            a 4xx is permanent and drops the batch outright, a 5xx is retried through the queue.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "from" 1800 "expr" `(sum(increase(otelcol_exporter_send_failed_spans_total[30m])) or vector(0)) + (sum(increase(otelcol_exporter_send_failed_metric_points_total[30m])) or vector(0)) + (sum(increase(otelcol_exporter_send_failed_log_records_total[30m])) or vector(0))`) | nindent 10 }}
 
       - uid: lgtm-otelcol-queue-near-capacity
         title: OTel collector sending queue near capacity
