@@ -164,6 +164,32 @@ spec:
             value: statefulset
             action: upsert
 
+      # k8seventsreceiver stamps each record with the event's ORIGINAL eventTime —
+      # GetEventTimestamp (internal/k8sinventory) reads EventTime > LastTimestamp >
+      # FirstTimestamp and never series.lastObservedTime. client-go's event broadcaster
+      # re-PATCHes every live event series once every 30m (refreshTime in
+      # k8s.io/client-go/tools/events), so for events.k8s.io-style events — eventTime set,
+      # lastTimestamp null, series block — the receiver sees the watch MODIFIED and re-emits
+      # the record still carrying the original eventTime, hours stale and staler every round.
+      # Loki's ingester accepts unordered writes only back to max_chunk_age/2 (1h at the
+      # default 2h), rejects those entries with 400 "entry too far behind", and the exporter
+      # treats 400 as Permanent and drops the WHOLE batch. Legacy core/v1 events are
+      # unaffected: their lastTimestamp is refreshed on repeat.
+      #
+      # Re-stamp as observed-now. Nothing is destroyed — the receiver already preserves the
+      # original as the k8s.event.start_time attribute (k8s_event_start_time in Loki).
+      #
+      # The int64 form is required. OTTL's comparison table allows only == and != between two
+      # time.Time values, so `where time < Now() - Duration("10m")` is always false and the
+      # statement silently never fires — it parses clean, which is what makes it dangerous.
+      # 600000000000ns = 10m: comfortably inside Loki's 1h cutoff, well outside pipeline lag.
+      transform/events:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(time, Now()) where UnixNano(Now()) - time_unix_nano > 600000000000
+
     exporters:
       # Prometheus native OTLP ingestion (HTTP, not gRPC)
       otlp_http/metrics:
@@ -217,7 +243,7 @@ spec:
           exporters: [otlp_http/metrics, debug]
         logs:
           receivers: [k8s_events]
-          processors: [memory_limiter, resource/events]
+          processors: [memory_limiter, resource/events, transform/events]
           exporters: [otlp_http/loki]
 
   {{- if .Values.collectors.persistentQueue.enabled }}
