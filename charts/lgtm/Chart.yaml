@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.20.0
+version: 0.21.0
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -31,19 +31,19 @@ maintainers:
 dependencies:
   # https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
   - name: kube-prometheus-stack
-    version: 88.3.0
+    version: 88.5.4
     repository: https://prometheus-community.github.io/helm-charts
     condition: kube-prometheus-stack.enabled
   # https://artifacthub.io/packages/helm/grafana-community/grafana
   # (chart moved from grafana.github.io to grafana-community in January 2026)
   - name: grafana
-    version: 12.10.4
+    version: 12.11.2
     repository: https://grafana-community.github.io/helm-charts
     condition: grafana.enabled
   # https://artifacthub.io/packages/helm/grafana-community/loki
   # (chart moved to grafana-community in March 2026; grafana.github.io 7.x is GEL-only)
   - name: loki
-    version: 18.9.0
+    version: 18.11.2
     repository: https://grafana-community.github.io/helm-charts
     condition: loki.enabled
   # https://artifacthub.io/packages/helm/grafana-community/tempo — single-binary chart
@@ -58,7 +58,7 @@ dependencies:
     condition: pyroscope.enabled
   # https://artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-operator
   - name: opentelemetry-operator
-    version: 0.121.0
+    version: 0.122.0
     repository: https://open-telemetry.github.io/opentelemetry-helm-charts
     condition: opentelemetry-operator.enabled
 annotations:
