@@ -1,66 +1,15 @@
 {{- /*
-Collector and Target Allocator health (ADR-0015).
+Collector and Target Allocator alerts (ADR-0015; exporter windows: ADR-0016).
+Rendered through `tpl`; PromQL expressions follow the positive-means-bad convention.
 
-Rendered through `tpl`, so this file can use the shared lgtm.alerting.query
-helper and gate individual rules on chart values. PromQL convention: a POSITIVE
-value means bad, so every rule is a `gt` against the helper's threshold.
+Keep one rate()/increase() per metric name: both drop __name__, so a multi-name
+regex can create duplicate labelsets. Export rules add `lgtm_signal`, join with
+`or`, then sum by (job, pod, exporter). Do not add vector(0); absent metrics are OK.
 
-Thresholds are taken from the red step of the matching panel in
-dashboards/otel-collector.json rather than invented.
-
-The Target Allocator rule is the reason this pack exists. Each allocator is a
-separate Deployment whose health is NOT reflected in the parent
-OpenTelemetryCollector CR status, so an ArgoCD Application reports Healthy right
-through an allocator crashloop, and there is no liveness probe that would catch
-it either — the restart count is the only honest signal (see ADR-0014 and the
-README's Operations section). We have seen this hide a node-allocator crashloop
-for 8 days and ~1800 restarts while every ServiceMonitor in the cluster silently
-flapped in and out of the scrape set.
-
-Note the shape of the multi-signal rules: one sum() per metric name, combined
-with +, never a single rate({__name__=~"a|b"}) selector. rate() strips __name__
-from its output, so a regex matching two metric names that a receiver emits for
-the same labelset — the otlp receiver reports refusals for metrics AND logs
-under one `receiver` label — produces a vector with duplicate labelsets and
-Prometheus errors with "vector cannot contain metrics with the same labelset".
-A rule in that state reports health=error and never fires, which is the worst
-possible failure for a guard. `or vector(0)` on each term keeps a missing metric
-from blanking the whole expression.
-
-LABEL SPELLING — the trap this pack fell into twice. Prometheus ingests OTLP
-with translationStrategy: NoTranslation (values.yaml), so metric names AND label
-names keep their dots and must be QUOTED in PromQL: {"k8s.container.restarts",
-"k8s.pod.name"=~"..."}, max by ("k8s.pod.name"). The underscored spelling
-(k8s_pod_name) is correct for LOKI only — Loki's OTLP ingestion sanitises
-attribute names, which is why datasources.yaml uses it. Mixing them does not
-error: an underscored label is a legal label name that simply matches nothing,
-so the rule reports health=ok, sits at NoData -> noDataState, and never fires.
-That is indistinguishable from "healthy" in every UI. Same rule in annotations:
-$labels.k8s_pod_name cannot reach a dotted label — use index $labels "k8s.pod.name".
-
-k8s.container.restarts comes from the cluster collector's k8s_cluster receiver.
-`delta` rather than `increase` because it is a gauge. We do not use
-k8s.container.status.reason, though the chart enables it: an OOMKilled or
-CrashLoopBackOff container restarts too, so restarts already covers both, and
-that metric carries its reason as a *data-point* attribute whose label spelling
-under NoTranslation is not exercised anywhere else in this chart.
-
-EXPORT FAILURES ARE WATCHED TWICE, on purpose. The rate([5m]) rule with for: 10m only
-catches SUSTAINED failure. A drop that arrives as one burst every 30 minutes — which is
-exactly the shape of the stale-k8s-event bug ADR-0016 fixes — keeps the rate non-zero for
-about five minutes, reaches Pending, and resets, forever. That rule sat over this bug for
-months and never fired. The burst rule is increase([30m]) with for: 0 so a single periodic
-drop is enough; its lookback is widened to from: 1800 to cover the range selector, as the
-Target Allocator rule does for its [1h]. Keep both: for: 0 alone would be noisy as the only
-export signal, and the 5m rate is what tells you a backend is down rather than flapping.
-
-COLLECTOR IDENTITY — select a collector with `job`, never `service`. Each
-collector sets service.telemetry.resource.service.name (see the collector
-templates); Prometheus rebuilds `job` from it on OTLP ingest, so job is exactly
-the name this chart chose. `service` is the operator-derived Kubernetes Service
-name, "otel-node-collector-collector-monitoring" — an absent() keyed on it is
-permanently true and fires on day one. Matches the up{job=~...} idiom in the
-loki/prometheus/tempo packs.
+Prometheus uses NoTranslation, so dotted OTel labels stay quoted and Grafana
+annotations use index for them. Collector identity is `job`, not `service`.
+Keep both export rules: 5m + for: 10m catches sustained failures; 30m + for: 0
+catches isolated bursts.
 */ -}}
 apiVersion: 1
 groups:
@@ -98,37 +47,37 @@ groups:
         execErrState: Error
         isPaused: false
         annotations:
-          summary: A collector is dropping telemetry on export
+          summary: Collector pod {{ `{{ $labels.pod }}` }} exporter {{ `{{ $labels.exporter }}` }} has sustained export failures
           description: >-
-            Spans, metric points or log records are failing to send to their backend. Sustained
-            failures fill the sending queue and then drop data. Check the backend's own alerts
-            first, then the collector logs. The OTel Collector dashboard breaks this down by
-            collector and signal.
+            Collector job {{ `{{ $labels.job }}` }}, pod {{ `{{ $labels.pod }}` }}, exporter
+            {{ `{{ $labels.exporter }}` }} is failing to send spans, metric points or log records
+            to its backend. Sustained retryable failures can fill the sending queue and eventually
+            cause data loss. Check the backend's own alerts first, then the collector logs.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "expr" `(sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_metric_points_total[5m])) or vector(0)) + (sum(rate(otelcol_exporter_send_failed_log_records_total[5m])) or vector(0))`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum by (job, pod, exporter) (label_replace(rate(otelcol_exporter_send_failed_spans_total[5m]), "lgtm_signal", "spans", "exporter", ".*") or label_replace(rate(otelcol_exporter_send_failed_metric_points_total[5m]), "lgtm_signal", "metric_points", "exporter", ".*") or label_replace(rate(otelcol_exporter_send_failed_log_records_total[5m]), "lgtm_signal", "log_records", "exporter", ".*"))`) | nindent 10 }}
 
       - uid: lgtm-otelcol-export-drop-burst
-        title: OTel collector dropped telemetry in a burst
+        title: OTel collector export failure in a burst
         condition: C
-        # for: 0 — a periodic burst never survives a Pending window. See the header note.
         for: 0
         noDataState: OK
         execErrState: Error
         isPaused: false
         annotations:
-          summary: A collector dropped telemetry in the last 30 minutes
+          summary: Collector pod {{ `{{ $labels.pod }}` }} exporter {{ `{{ $labels.exporter }}` }} had an export failure in the last 30 minutes
           description: >-
-            At least one span, metric point or log record failed to send and was dropped. Unlike
-            the sustained-failure rule this fires on a single burst, which is how a periodic
-            rejection looks — e.g. a backend refusing a whole batch on one recurring cycle rather
-            than failing continuously. Check the collector logs for the backend's status code;
-            a 4xx is permanent and drops the batch outright, a 5xx is retried through the queue.
+            Collector job {{ `{{ $labels.job }}` }}, pod {{ `{{ $labels.pod }}` }}, exporter
+            {{ `{{ $labels.exporter }}` }} failed to send at least one span, metric point or log
+            record. Unlike the sustained-failure rule this fires on a single burst, which is how
+            a periodic rejection looks. Check the collector logs for the backend's status code;
+            a 4xx is permanent and drops the rejected batch, while a retryable 5xx goes through
+            the sending queue and may succeed on retry.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "from" 1800 "expr" `(sum(increase(otelcol_exporter_send_failed_spans_total[30m])) or vector(0)) + (sum(increase(otelcol_exporter_send_failed_metric_points_total[30m])) or vector(0)) + (sum(increase(otelcol_exporter_send_failed_log_records_total[30m])) or vector(0))`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" . "from" 1800 "expr" `sum by (job, pod, exporter) (label_replace(increase(otelcol_exporter_send_failed_spans_total[30m]), "lgtm_signal", "spans", "exporter", ".*") or label_replace(increase(otelcol_exporter_send_failed_metric_points_total[30m]), "lgtm_signal", "metric_points", "exporter", ".*") or label_replace(increase(otelcol_exporter_send_failed_log_records_total[30m]), "lgtm_signal", "log_records", "exporter", ".*"))`) | nindent 10 }}
 
       - uid: lgtm-otelcol-queue-near-capacity
         title: OTel collector sending queue near capacity
