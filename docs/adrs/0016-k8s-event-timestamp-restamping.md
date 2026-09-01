@@ -4,7 +4,7 @@ type: adr
 title: Re-stamp stale Kubernetes event timestamps in the cluster collector
 status: accepted
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-01
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -93,12 +93,16 @@ Three details are load-bearing:
 any particular cluster. Every install with `collectors.cluster.enabled` hits it the moment an
 `events.k8s.io` producer runs. A knob would only let an install stay broken.
 
-**The companion alert rule is part of this decision, not a nicety.** `lgtm-otelcol-export-drop-burst`
-uses `increase(...[30m])` with `for: 0`, alongside the existing 5m-rate rule which stays as the
-sustained-failure signal. Same reasoning as ADR-0014 treating its smoke-test assertions as part of
-the fix: shipping the fix without closing the detection gap leaves the next periodic-drop bug just
-as invisible as this one was. Its lookback is widened to `from: 1800` to cover the `[30m]` selector,
-mirroring the Target Allocator rule's `from: 3600` for `[1h]`.
+**The companion alert rule is part of this decision, not a nicety.** The stable Grafana uid remains
+`lgtm-otelcol-export-drop-burst`, but its title and annotations call the condition an export failure:
+the send-failed counters include permanent failures such as this incident's 400 and retryable failures
+such as a 5xx that enters the sending queue and may later succeed. The rule uses `increase(...[30m])`
+with `for: 0`, alongside the existing 5m-rate rule which stays as the sustained-failure signal. Both
+rules group by `job`, `pod` and `exporter`, so a notification identifies the affected collector and
+export path. Same reasoning as ADR-0014 treating its smoke-test assertions as part of the fix: shipping
+the fix without closing the detection gap leaves the next periodic-failure bug just as invisible as
+this one was. Its lookback is widened to `from: 1800` to cover the `[30m]` selector, mirroring the
+Target Allocator rule's `from: 3600` for `[1h]`.
 
 ## Alternatives considered
 
@@ -128,9 +132,10 @@ mirroring the Target Allocator rule's `from: 3600` for `[1h]`.
 - Records older than ten minutes from *any* cause are re-stamped, not just replayed series — a
   collector restarted after a long outage replays its queue with rewritten times. That is the same
   trade, and the alternative is the same 400.
-- The burst rule can fire on a single failed record anywhere in the stack. That is intended; it is
-  a `warning`, and export failures are data loss by definition. Installs that want only sustained
-  failure can pause it by uid.
+- The burst rule can fire on a single export failure anywhere in the stack. That is intended; it is
+  a `warning`. A permanent 4xx drops the rejected batch, while a retryable 5xx goes through the
+  sending queue and may succeed, so the alert does not claim every failure is already data loss.
+  Installs that want only sustained failure can pause it by uid.
 - The alert pack now carries two rules over the same metrics with different windows. The header
   comment in `alerts/otel-collector.yaml` explains why, so neither is later removed as a duplicate.
 - One more processor in the logs pipeline. Negligible: the events volume is a handful of records

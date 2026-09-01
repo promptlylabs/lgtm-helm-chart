@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.21.0
+version: 0.21.1
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
