@@ -4,7 +4,7 @@ type: adr
 title: Grafana-managed alerting — HA wiring and a baseline rule pack
 status: accepted
 created: 2026-08-25
-updated: 2026-08-25
+updated: 2026-09-04
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -126,6 +126,15 @@ collector's `:8888` monitoring Service, not the allocator's `:8080`. Adding that
 would make the guard first-class and is worth doing, but it is a separate change with its own
 cardinality and RBAC questions; restarts already catch both crashloop and OOMKill, which is the
 failure this pack exists for.
+
+> **Extended by [ADR-0017](./0017-bounded-otlp-pushes-and-loki-ingest-ceilings.md)
+> (0.23.0).** The Loki pack gains `lgtm-loki-otlp-ingest-rejected-burst` and
+> `lgtm-loki-discarded-samples-burst`, and `lgtm-loki-otlp-ingest-errors` is
+> retitled to say what its 5xx selector actually watches. Both new rules are
+> burst-shaped (`for: 0`, 30m window, threshold 0) rather than ratios: a 4xx
+> rejection is permanent data loss whether or not it is a large fraction of
+> traffic, and the incident that prompted them measured 0.46% — invisible to
+> any ratio threshold while dropping over a thousand records per occurrence.
 
 ## Consequences
 

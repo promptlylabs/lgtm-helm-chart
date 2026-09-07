@@ -75,10 +75,29 @@ Exporter sending-queue batching — replaces the deprecated batch processor.
 Upstream is retiring the batch processor: it acks data before the exporter
 confirms delivery and swallows per-batch errors, which breaks backpressure.
 Batching instead lives in each real exporter's sending queue, where it shares
-the queue's retry and backpressure. sizer:items + min_size/flush_timeout mirror
-the batch processor's old send_batch_size (1024) / timeout (10s); without
-sizer:items, min_size would count requests, not data points. The sending queue
-and retry_on_failure are on by collector default — pinned here for visibility.
+the queue's retry and backpressure. The sending queue and retry_on_failure are
+on by collector default — pinned here for visibility.
+
+sizer:bytes, not items (ADR-0017). This helper originally used
+sizer:items/min_size:1024 to mirror the old batch processor's send_batch_size,
+and inherited that processor's missing byte cap along with it. An item count
+bounds how many records go into a push; what Loki rejects is BYTES. With no
+max_size, any cluster whose mean log record exceeded
+ingestion_burst_size_mb/1024 (~6 KiB against Loki's stock 6 MB burst) built
+pushes the chart's own Loki could never accept — at any ingest rate, because
+the burst is the token bucket's capacity, not a rate. So the cap is in bytes,
+and it is checked against that burst at render time (see
+lgtm.collector.validateBatchCeiling). max_size splits an oversized accumulation
+into conforming requests rather than rejecting it.
+
+int64 on the byte values is load-bearing: Helm decodes YAML numbers as
+float64, so an unwrapped 1048576 renders as 1.048576e+06 and the collector
+rejects the config at startup.
+
+batch::sizer is allowed to differ from sending_queue::sizer — the field exists
+to allow exactly that — so the queue keeps its `requests` default. Upstream's
+"min_size <= queue_size" constraint applies only when the two sizers match.
+
 Include once per real exporter (never the debug exporter) at the exporter's
 sub-key indent, e.g. with nindent 8.
 
@@ -89,6 +108,7 @@ extension that does not exist and fail config validation at startup.
 */}}
 {{- define "lgtm.collector.sendingQueue" -}}
 {{- $root := .root -}}
+{{- $batch := $root.Values.collectors.batch -}}
 sending_queue:
   enabled: true
   {{- if and $root.Values.collectors.persistentQueue.enabled .storage }}
@@ -97,9 +117,10 @@ sending_queue:
   storage: file_storage/queue
   {{- end }}
   batch:
-    sizer: items
-    min_size: 1024
-    flush_timeout: 10s
+    sizer: bytes
+    min_size: {{ int64 $batch.minSizeBytes }}
+    max_size: {{ int64 $batch.maxSizeBytes }}
+    flush_timeout: {{ $batch.flushTimeout }}
 retry_on_failure:
   enabled: true
 {{- end -}}
@@ -232,6 +253,40 @@ Included from templates/validations.yaml, which renders on every pass.
 {{- $shared := or (has (get $db "type" | toString) (list "mysql" "postgres")) (hasKey $env "GF_DATABASE_TYPE") (hasKey $env "GF_DATABASE_URL") .Values.grafana.envFromSecret .Values.grafana.envFromSecrets .Values.grafana.envFromConfigMaps -}}
 {{- if not $shared -}}
 {{- fail (printf "grafana.replicas is %v but no shared database is configured. Grafana's HA alerting requires every replica to share one database, and this chart defaults to per-pod ephemeral SQLite — each replica would keep its own alert state, silences and dashboards. Point grafana.grafana\\.ini.database at an external MySQL/PostgreSQL (examples/values-azure.yaml shows the PostgreSQL pattern) or set grafana.replicas back to 1." (.Values.grafana.replicas)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Batch ceiling guard — the collector byte cap must stay under Loki's ingestion
+burst (ADR-0017).
+
+This chart owns both ends of the contract: it sets the exporters' batch
+max_size AND the Loki limits_config that receives the batch. Loki's
+ingestion_burst_size_mb is the token bucket's CAPACITY, so a single push larger
+than it is rejected with 429 even against a completely idle Loki. The exporter
+then exhausts retry_on_failure and drops the whole batch — including every
+unrelated record that happened to share it. That is not a load failure, and no
+amount of headroom on ingestion_rate_mb prevents it.
+
+Deliberately quiet when it cannot know the answer: collectors off, Loki off
+(the endpoint is then an external Loki this chart does not configure), or a
+consumer who replaced limits_config and dropped the key. A false failure would
+block a correctly-configured install.
+
+Included from templates/validations.yaml, which renders on every pass.
+*/}}
+{{- define "lgtm.collector.validateBatchCeiling" -}}
+{{- if and .Values.collectors.enabled .Values.loki.enabled -}}
+{{- $inner := .Values.loki.loki | default dict -}}
+{{- $limits := get $inner "limits_config" | default dict -}}
+{{- $burst := get $limits "ingestion_burst_size_mb" -}}
+{{- if $burst -}}
+{{- $ceiling := mul (int $burst) 1048576 -}}
+{{- $max := int .Values.collectors.batch.maxSizeBytes -}}
+{{- if ge $max $ceiling -}}
+{{- fail (printf "collectors.batch.maxSizeBytes is %v but loki.loki.limits_config.ingestion_burst_size_mb is %v (%v bytes), so the collectors can build a push this chart's own Loki will never accept. The burst is the token bucket's CAPACITY, not a rate: a single request larger than it is rejected with 429 even against a completely idle Loki, the exporter exhausts retry_on_failure, and the entire batch is dropped — unrelated records included. Lower collectors.batch.maxSizeBytes below %v bytes, or raise loki.loki.limits_config.ingestion_burst_size_mb." $max $burst $ceiling $ceiling) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

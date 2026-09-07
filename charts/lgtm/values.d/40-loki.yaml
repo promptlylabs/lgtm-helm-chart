@@ -40,6 +40,16 @@ loki:
     limits_config:
       retention_period: 168h
 
+      # Stated, not inherited (ADR-0017). These are Loki's own stock values, so
+      # setting them changes nothing today. The point is that
+      # collectors.batch.maxSizeBytes is chosen against the burst and guarded
+      # against it at render time (templates/validations.yaml); leaving the
+      # burst implicit means a future upstream default change silently
+      # invalidates that choice, and the failure mode is a permanent 429 on
+      # every oversized push regardless of how idle Loki is.
+      ingestion_rate_mb: 4
+      ingestion_burst_size_mb: 6
+
       # OTLP attribute mapping. Loki's built-in default indexes k8s.pod.name and
       # service.instance.id as stream labels; upstream now flags both as
       # high-cardinality (every pod restart / instance churn mints a new stream).
