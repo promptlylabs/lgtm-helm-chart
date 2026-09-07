@@ -63,6 +63,12 @@ helm upgrade lgtm promptlylabs/lgtm -n observability \
 
 Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, `kube-prometheus-stack.*`, …) — see each upstream chart's documentation. The umbrella's own keys:
 
+> **Breaking in 0.23.0** (ADR-0017) — JSON log bodies are no longer flattened into attributes.
+>
+> The node collector's filelog `json_parser` merged *every* top-level key of a JSON log body into log attributes, which the chart's `otlp_config` then demotes to structured metadata — capped per line by Loki's `max_structured_metadata_size` (64KB stock). Over-cap records were dropped **whole**, body included, and silently: Loki answers OTLP with a partial success, so nothing in the collector reports it. The parser existed only to expose `traceId`/`spanId`, which are now extracted through OTTL scratch that never leaves the processor.
+>
+> For JSON log lines, every field other than `traceId`/`spanId` disappears from Loki structured metadata. Bodies are unchanged, and `trace_id`/`span_id` still populate, so the Grafana derived-field trace link is unaffected. **If you have queries or dashboards reading the flattened fields**, set `collectors.node.flattenJsonLogBodies: true` to restore the old behaviour — along with the unbounded structured metadata, which the new `lgtm-loki-discarded-samples-burst` rule will now tell you about.
+
 > **Breaking in 0.12.0** (ADR-0013) — three changes:
 >
 > - The shared `collectors.priorityClassName` key is replaced by per-collector `collectors.node.priorityClassName` / `.cluster.` / `.faro.`, and the node and cluster collectors now default to `system-node-critical` / `system-cluster-critical`. The values schema rejects the old key, so an upgrade that still sets it fails immediately rather than silently ignoring it.
@@ -93,9 +99,13 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.enabled` | `true` | Master switch for all collector CRs |
 | `collectors.image` | `""` | Override the collector image (node + cluster) |
 | `collectors.resourceDetection.detectors` | `[]` | resourcedetection processor detectors (e.g. `[azure]`) |
+| `collectors.batch.maxSizeBytes` | `4194304` (4 MiB) | Hard byte ceiling on a single exporter push, applied to every exporter on all three collectors. Must stay **below** `loki.loki.limits_config.ingestion_burst_size_mb` — that burst is the token bucket's *capacity*, so a larger push is rejected with 429 even against a completely idle Loki, and the exporter then drops the whole batch. The chart fails the render if the two ever cross |
+| `collectors.batch.minSizeBytes` | `1048576` (1 MiB) | Batch size that triggers an early send. A quiet collector still flushes on `flushTimeout` |
+| `collectors.batch.flushTimeout` | `10s` | Maximum time a batch waits before being sent regardless of size |
 | `collectors.persistentQueue.enabled` | `false` | Back exporter sending queues with a `file_storage` extension on durable storage (node → emptyDir, cluster → PVC) so queued batches survive a restart. See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.persistentQueue.node.backend` | `emptyDir` | What backs the DaemonSet queue: `emptyDir` (no chown initContainer, SELinux-safe, bounded by `sizeLimit`) or `hostPath` (also survives pod recreation). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.persistentQueue.cluster.chownInitContainer` | `false` | Run the root chown initContainer on the cluster collector. Needed only on storage classes whose CSI driver does not apply `fsGroup` (file/NFS-backed: EFS, Azure Files, `nfs-subdir-provisioner`) |
+| `collectors.node.flattenJsonLogBodies` | `false` | Merge every top-level key of a JSON log body into log attributes (and so into Loki structured metadata). Off by default because over-cap records are dropped whole and silently — see the 0.23.0 note above and ADR-0017 |
 | `collectors.<node\|cluster\|faro>.priorityClassName` | `system-node-critical` / `system-cluster-critical` / `""` | PriorityClass per collector. The two `system-*` classes are built into every cluster and are what makes kubelet keep admitting the pod under `DiskPressure` — set to `""` to opt out |
 | `collectors.<node\|cluster\|faro>.podSecurityContext` | `fsGroup: 10001` (node, cluster) / `{}` (faro) | Pod security context. `fsGroup` is what makes the queue volume writable; add `seLinuxOptions` here on Enforcing clusters — see [SELinux-enforcing clusters](#selinux-enforcing-clusters) |
 | `collectors.<node\|cluster\|faro>.securityContext` | `{}` | Container security context for the `otc-container` |
@@ -137,6 +147,8 @@ If a monitor in **another** namespace references a Secret, list that namespace i
 Alerting is **Grafana-managed** (ADR-0015): Alertmanager is disabled, and rules, contact points and notification policies are provisioned from ConfigMaps labelled `grafana_alert: "1"`, from any namespace. The chart ships a baseline rule pack for its own components, and no contact points — where alerts *go* is site-specific.
 
 **The shipped rules** live in `alerts/`, one pack per component, each gated on that component being enabled exactly like the dashboards: `otel-collector`, `loki`, `prometheus`, `tempo`. They watch ingest and query error rates, queue and WAL saturation, compaction health, and — the one that prompted the pack — **Target Allocator restarts**. Each allocator is a separate Deployment whose health is not reflected in the parent `OpenTelemetryCollector` CR status, so an ArgoCD Application reports `Healthy` right through an allocator crashloop; we have seen that hide one for 8 days and ~1800 restarts while every ServiceMonitor in the cluster flapped in and out of the scrape set (see [Target allocator](#target-allocator) and [Operations](#operations)).
+
+Two rules in the Loki pack are shaped differently on purpose. `lgtm-loki-otlp-ingest-rejected-burst` and `lgtm-loki-discarded-samples-burst` count occurrences over a 30-minute window at threshold 0 (`for: 0`) rather than taking an error ratio, because a 4xx rejection is *permanent* data loss whether or not it is a large fraction of traffic — the incident behind ADR-0017 measured 0.46% of pushes while dropping over a thousand records at a time. `loki_discarded_samples_total` is also the only signal in the entire stack for drops Loki reports as an OTLP partial success; its `reason` label (`rate_limited`, `structured_metadata_too_large`, `line_too_long`) is what tells you which limit you hit.
 
 Two things to know about them:
 

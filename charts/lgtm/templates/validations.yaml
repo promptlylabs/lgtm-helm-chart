@@ -5,3 +5,4 @@ NOTES.txt would not do: `helm template` skips it, so CI would never see a
 failure.
 */ -}}
 {{- include "lgtm.grafana.validateAlertingHA" . -}}
+{{- include "lgtm.collector.validateBatchCeiling" . -}}

@@ -252,13 +252,17 @@ spec:
         operators:
           - type: container
             id: container-parser
-          # Parse JSON bodies so trace context can be promoted (non-JSON logs
-          # pass through unmodified)
+          {{- if .Values.collectors.node.flattenJsonLogBodies }}
+          # Opt-in (collectors.node.flattenJsonLogBodies). parse_to defaults to
+          # `attributes`, so this merges EVERY top-level key of the body, and
+          # the chart's otlp_config then demotes them to structured metadata,
+          # which Loki caps per line. Off by default — see ADR-0017.
           - type: json_parser
             id: json-body-parser
             if: 'body matches "^\\{"'
             parse_from: body
             on_error: send
+          {{- end }}
 
     processors:
       # Percentage mode tracks the container's cgroup limit, so it auto-scales
@@ -303,15 +307,32 @@ spec:
           - sources:
               - from: connection
 
-      # Promote traceId/spanId from JSON log attributes to the OTLP LogRecord
+      # Promote traceId/spanId from JSON log bodies to the OTLP LogRecord
       # fields — Loki stores them as trace_id/span_id structured metadata,
-      # which the Grafana derived field links on.
+      # which the Grafana derived field links on. By default the JSON is parsed
+      # into `cache`, OTTL's per-record scratch, which is never exported: the
+      # two IDs are all that leaves this processor (ADR-0017). With
+      # collectors.node.flattenJsonLogBodies the filelog parser has already put
+      # the fields in attributes, so read them from there instead.
+      #
+      # error_mode: ignore is required, not cosmetic. The default is propagate,
+      # which DROPS the record from the pipeline, and ParseJSON can fail on a
+      # body that starts with { but is not valid JSON. ignore logs the error and
+      # continues to the next statement — the same forgiveness the filelog
+      # parser's on_error: send provided.
       transform/trace_context:
+        error_mode: ignore
         log_statements:
           - context: log
             statements:
+              {{- if .Values.collectors.node.flattenJsonLogBodies }}
               - set(trace_id.string, attributes["traceId"]) where attributes["traceId"] != nil
               - set(span_id.string, attributes["spanId"]) where attributes["spanId"] != nil
+              {{- else }}
+              - merge_maps(cache, ParseJSON(body), "upsert") where IsMatch(body, "^\\{")
+              - set(trace_id.string, cache["traceId"]) where cache["traceId"] != nil
+              - set(span_id.string, cache["spanId"]) where cache["spanId"] != nil
+              {{- end }}
 
       resource:
         attributes:

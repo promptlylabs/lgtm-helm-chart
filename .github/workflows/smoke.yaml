@@ -305,8 +305,10 @@ jobs:
           # rejected by the provisioner.
           rules=$(curl -fsS -u "admin:$GP" localhost:13000/api/v1/provisioning/alert-rules \
             | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
-          # Full default stack: 7 otel-collector + 5 loki + 5 prometheus + 4 tempo = 21.
-          [ "$rules" -ge 21 ] || fail "expected >=21 provisioned Grafana alert rules, got $rules"
+          # Full default stack: 8 otel-collector + 7 loki + 5 prometheus + 4 tempo = 24.
+          # Counts are RENDERED rules, not `- uid:` lines: the otel-collector pack
+          # expands two of its rules through range loops (per signal, per collector).
+          [ "$rules" -ge 24 ] || fail "expected >=24 provisioned Grafana alert rules, got $rules"
           # /api/folders, not /api/v1/provisioning/folders — the latter 404s
           # (provisioning has no folders endpoint; the folder is created as a
           # side effect of the rule group naming it).

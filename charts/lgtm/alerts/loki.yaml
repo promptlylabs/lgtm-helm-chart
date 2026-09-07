@@ -9,6 +9,11 @@ idiom, the OTLP route label value (route="otlp_v1_logs"), the status_code label
 (not status/code), and the WAL panel's 0.9 red step on a 0-1 fraction. Ratios
 divide by clamp_min(..., 1) exactly as the dashboard does, which deliberately
 keeps low-traffic noise from firing.
+
+The two *-burst rules are the exception, and deliberately so: a permanent
+rejection is loss whether or not it is a large fraction of traffic, so they
+count occurrences over a 30m window at threshold 0 rather than taking a ratio.
+Same shape as lgtm-otelcol-export-drop-burst in the collector pack.
 */ -}}
 apiVersion: 1
 groups:
@@ -18,21 +23,74 @@ groups:
     interval: {{ .Values.lgtm.alerting.interval | quote }}
     rules:
       - uid: lgtm-loki-otlp-ingest-errors
-        title: Loki rejecting OTLP log ingest
+        title: Loki failing OTLP log ingest with server errors
         condition: C
         for: 10m
         noDataState: OK
         execErrState: Error
         isPaused: false
         annotations:
-          summary: Over 5% of OTLP log pushes to Loki are failing
+          summary: Over 5% of OTLP log pushes to Loki are returning 5xx
           description: >-
-            The collectors' log pipeline is losing data at the door. Common causes are per-tenant
-            ingestion limits and out-of-order or too-old timestamps; the reason is in Loki's logs.
+            Loki itself is failing to accept log pushes — check its logs and the Loki dashboard's
+            latency panels, as this usually follows storage or memory pressure. A 5xx is retryable
+            and goes back through the exporter's sending queue, so a short burst is survivable.
+            REJECTIONS are a different rule: per-tenant limits are 429 and out-of-order or too-old
+            timestamps are 400, both permanent, both covered by lgtm-loki-otlp-ingest-rejected-burst.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "loki")) | nindent 10 }}
         data:
           {{- include "lgtm.alerting.query" (dict "root" . "threshold" 0.05 "expr" `sum(rate(loki_request_duration_seconds_count{route="otlp_v1_logs",status_code=~"5.."}[5m])) / clamp_min(sum(rate(loki_request_duration_seconds_count{route="otlp_v1_logs"}[5m])), 1)`) | nindent 10 }}
+
+      # Burst-shaped, mirroring lgtm-otelcol-export-drop-burst: a 4xx is a
+      # PERMANENT rejection, so every occurrence is data this stack will never
+      # have. A ratio rule cannot see it — a real incident here measured 131
+      # rejections against 28422 pushes, 0.46%, far under any sane ratio
+      # threshold while dropping over a thousand records at a time.
+      - uid: lgtm-loki-otlp-ingest-rejected-burst
+        title: Loki rejected an OTLP log push
+        condition: C
+        for: 0
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Loki rejected OTLP log pushes with {{ `{{ $labels.status_code }}` }} in the last 30 minutes
+          description: >-
+            Loki returned {{ `{{ $labels.status_code }}` }} to the collectors' log exporter, which is
+            permanent: the exporter retries, gives up and drops the whole batch, including every
+            unrelated record that shared it. 429 is the per-tenant ingestion limit — note that
+            ingestion_burst_size_mb is the token bucket's CAPACITY, so an oversized single push is
+            rejected even against a completely idle Loki. 400 is usually an out-of-order or too-old
+            timestamp. loki_discarded_samples_total carries the exact reason.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "from" 1800 "expr" `sum by (status_code) (increase(loki_request_duration_seconds_count{route="otlp_v1_logs",status_code=~"4.."}[30m]))`) | nindent 10 }}
+
+      # The only signal for drops Loki does NOT report as an error. When a record
+      # exceeds max_structured_metadata_size Loki answers OTLP with a partial
+      # success, so the collector logs nothing and no request-level metric moves;
+      # this counter is the entire evidence trail.
+      - uid: lgtm-loki-discarded-samples-burst
+        title: Loki discarded log lines
+        condition: C
+        for: 0
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Loki discarded log lines with reason {{ `{{ $labels.reason }}` }} in the last 30 minutes
+          description: >-
+            Loki accepted the push but threw away lines, reason {{ `{{ $labels.reason }}` }}. This is
+            silent everywhere else in the stack. structured_metadata_too_large drops the record WHOLE,
+            body included (see collectors.node.flattenJsonLogBodies); rate_limited means pushes are
+            exceeding ingestion_rate_mb or ingestion_burst_size_mb; line_too_long means a single line
+            exceeded max_line_size, which Loki rejects rather than truncates by default.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "loki")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "from" 1800 "expr" `sum by (reason) (increase(loki_discarded_samples_total[30m]))`) | nindent 10 }}
 
       - uid: lgtm-loki-request-errors
         title: Loki returning server errors

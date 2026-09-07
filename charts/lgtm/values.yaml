@@ -155,6 +155,29 @@ collectors:
     detectors: []
     config: {}
 
+  # Exporter sending-queue batching, applied to every real exporter on all three
+  # collectors (ADR-0017). The cap is in BYTES because bytes are what the
+  # backends measure: Loki rejects any single push larger than its
+  # ingestion_burst_size_mb with a 429 no matter how idle it is, and the
+  # exporter then drops the whole batch once its retries run out. This chart
+  # configures both ends, so templates/validations.yaml fails the render if
+  # maxSizeBytes ever reaches the Loki burst.
+  #
+  # maxSizeBytes is measured on the OTLP protobuf request, which is larger than
+  # the entry bytes Loki counts against the burst (protobuf adds attribute keys,
+  # timestamps and framing) — so capping the larger quantity keeps the smaller
+  # one safely under. 4 MiB against Loki's stock 6 MiB burst leaves ~33%
+  # headroom. One cap covers all three signals: it is comfortably conservative
+  # for Prometheus OTLP and Tempo, neither of which has a comparable
+  # per-request ceiling.
+  #
+  # minSizeBytes only decides when a batch is big enough to send early; a quiet
+  # node still flushes on flushTimeout.
+  batch:
+    minSizeBytes: 1048576   # 1 MiB
+    maxSizeBytes: 4194304   # 4 MiB
+    flushTimeout: 10s
+
   # Opt-in durable sending queues (ADR-0011, revised by ADR-0013). Backs each
   # exporter's in-memory sending_queue with a file_storage extension on durable
   # storage, so queued batches survive a collector restart during a backend-down
@@ -259,6 +282,20 @@ collectors:
     # collector 0.131 (#38737). Adds an `interface` resource attribute — one
     # series per node NIC, so cardinality stays bounded.
     collectAllNetworkInterfaces: false
+    # Merge every top-level key of a JSON log body into log attributes.
+    # Default false (ADR-0017). The chart's otlp_config demotes non-indexed
+    # attributes to structured metadata, which Loki caps per log line at
+    # max_structured_metadata_size (64KB stock). Over-cap records are dropped
+    # WHOLE, body included, and silently: Loki answers OTLP with a partial
+    # success, so the collector logs nothing and only
+    # loki_discarded_samples_total{reason="structured_metadata_too_large"}
+    # moves — which the bundled lgtm-loki-discarded-samples-burst rule now
+    # watches. It also ships every field twice, since json_parser leaves the
+    # raw body in place.
+    # traceId/spanId are promoted to the LogRecord's trace_id/span_id either
+    # way, so the Grafana derived-field trace link works with this off. Set
+    # true only if you have queries that depend on the flattened fields.
+    flattenJsonLogBodies: false
     # Skip TLS verification when the kubeletstats receiver scrapes the kubelet
     # on :10250. Default true: most kubelets serve a self-signed serving cert
     # that no CA available to the pod can verify. Set false where kubelet
@@ -842,6 +879,16 @@ loki:
     # 7 days, matching Prometheus.
     limits_config:
       retention_period: 168h
+
+      # Stated, not inherited (ADR-0017). These are Loki's own stock values, so
+      # setting them changes nothing today. The point is that
+      # collectors.batch.maxSizeBytes is chosen against the burst and guarded
+      # against it at render time (templates/validations.yaml); leaving the
+      # burst implicit means a future upstream default change silently
+      # invalidates that choice, and the failure mode is a permanent 429 on
+      # every oversized push regardless of how idle Loki is.
+      ingestion_rate_mb: 4
+      ingestion_burst_size_mb: 6
 
       # OTLP attribute mapping. Loki's built-in default indexes k8s.pod.name and
       # service.instance.id as stream labels; upstream now flags both as

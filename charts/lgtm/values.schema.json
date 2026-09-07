@@ -103,6 +103,15 @@
             "config": { "type": "object" }
           }
         },
+        "batch": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "minSizeBytes": { "type": "integer", "minimum": 1 },
+            "maxSizeBytes": { "type": "integer", "minimum": 1 },
+            "flushTimeout": { "type": "string", "minLength": 1 }
+          }
+        },
         "persistentQueue": {
           "type": "object",
           "additionalProperties": false,
@@ -149,6 +158,7 @@
             "securityContext": { "type": "object" },
             "collectAllNetworkInterfaces": { "type": "boolean" },
             "kubeletInsecureSkipVerify": { "type": "boolean" },
+            "flattenJsonLogBodies": { "type": "boolean" },
             "internalMetricsPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "targetAllocator": {
               "type": "object",

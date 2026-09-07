@@ -4,7 +4,7 @@ type: adr
 title: Exporter-queue batching over the batch processor; OTAP/Arrow deferred
 status: accepted
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-09-04
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -17,6 +17,7 @@ related:
   see_also:
     - ./0005-otlp-push-scrapeless-prometheus.md
     - ./0006-latest-upstream-versions-reviewed-bumps.md
+    - ./0017-bounded-otlp-pushes-and-loki-ingest-ceilings.md
 ---
 
 # ADR-0009 — Exporter-queue batching over the batch processor; OTAP/Arrow deferred
@@ -44,9 +45,19 @@ questions:
 ## Decision
 
 1. **Replace the `batch` processor with per-exporter `sending_queue.batch`.** On
-   every real exporter across all three collectors, batch in the sending queue
-   (`sizer: items`, `min_size: 1024`, `flush_timeout: 10s` — mirroring the old
-   `send_batch_size` / `timeout`) plus the queue's default `retry_on_failure`.
+   every real exporter across all three collectors, batch in the sending queue,
+   plus the queue's default `retry_on_failure`.
+
+   > **Amended by [ADR-0017](./0017-bounded-otlp-pushes-and-loki-ingest-ceilings.md)
+   > (0.23.0).** This decision originally specified `sizer: items`,
+   > `min_size: 1024`, `flush_timeout: 10s`, mirroring the old
+   > `send_batch_size` / `timeout`. Mirroring the batch processor also
+   > reproduced its missing byte cap: with no `max_size`, any workload whose
+   > mean record size exceeded `ingestion_burst_size_mb / 1024` built pushes
+   > Loki could never accept. Batching is now `sizer: bytes` with an explicit
+   > `max_size`, configured through `collectors.batch`. The rest of this
+   > decision — batching in the exporter queue rather than the processor —
+   > stands.
    The shared block lives in the `lgtm.collector.sendingQueue` helper.
    `memory_limiter` stays first in every pipeline; the `debug` exporter is left
    unqueued.
@@ -79,7 +90,8 @@ questions:
   backpressure and retry, so a brief backend blip is retried rather than dropped
   mid-pipeline.
 - Batching tunables are centralized in one helper — change once, applies to all
-  collectors.
+  collectors. As of ADR-0017 they are also reachable from values
+  (`collectors.batch`) rather than hardcoded in the helper.
 - The OTAP question is settled and recorded; revisit only if a
   gateway/aggregation tier or multi-cluster→central-backend shipping is ever
   added (the canonical OTAP use case).
