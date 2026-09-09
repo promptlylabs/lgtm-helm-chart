@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.23.0
+version: 0.24.0
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -37,7 +37,7 @@ dependencies:
   # https://artifacthub.io/packages/helm/grafana-community/grafana
   # (chart moved from grafana.github.io to grafana-community in January 2026)
   - name: grafana
-    version: 12.11.2
+    version: 13.0.1
     repository: https://grafana-community.github.io/helm-charts
     condition: grafana.enabled
   # https://artifacthub.io/packages/helm/grafana-community/loki
