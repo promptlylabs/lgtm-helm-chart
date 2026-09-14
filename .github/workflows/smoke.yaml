@@ -246,6 +246,22 @@ jobs:
           [ "$found" -eq 1 ] || fail "no OTel host metrics arrived in Prometheus"
           echo "metrics OK ($n series)"
 
+          # ── control plane: apiserver ServiceMonitor → cluster collector ──
+          # The kube-prometheus-stack apiserver monitor authenticates with a
+          # Secret-sourced token, which only reaches the collector through the
+          # cluster allocator's allowInsecureAuthSecrets / mTLS (ADR-0018). Masked,
+          # every scrape is a 401 and nothing arrives. The steady-state log check
+          # below catches the 401s; this asserts the data itself.
+          found=0
+          for i in $(seq 1 36); do
+            n=$(curl -fsS 'localhost:19090/api/v1/query' --data-urlencode 'query=count({__name__=~"apiserver_request.*"})' \
+              | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else 0)' || echo 0)
+            if [ "$n" -gt 0 ]; then found=1; break; fi
+            sleep 5
+          done
+          [ "$found" -eq 1 ] || fail "no apiserver metrics arrived in Prometheus — is the cluster allocator masking the monitor's token?"
+          echo "apiserver metrics OK ($n series)"
+
           # ── span-metrics: Tempo metrics-generator → Prometheus ────────────
           # The SERVER test span above flows through Tempo's metrics-generator,
           # which remote-writes RED metrics. Asserts that path works end to end
@@ -465,6 +481,35 @@ jobs:
             fi
             echo "$ta: restarts=[$restarts], no secrets RBAC errors"
           done
+
+      - name: Assert the cluster target allocator is fenced
+        run: |
+          # ADR-0018: the cluster allocator serves the apiserver monitor's token
+          # over plain HTTP (allowInsecureAuthSecrets), and the chart's
+          # NetworkPolicy is what keeps other pods from reading it. Probe from a
+          # pod outside the collector: the node allocator (no policy) must
+          # answer — proving the probe itself works — and the cluster allocator
+          # must not.
+          kubectl -n default run ta-netpol-probe --image=docker.io/curlimages/curl:8.11.1 \
+            --restart=Never --command -- sh -c '
+              curl -fsS -m 10 -o /dev/null http://otel-node-collector-targetallocator.observability/scrape_configs || exit 10
+              curl -fsS -m 5 -o /dev/null http://otel-cluster-collector-targetallocator.observability/scrape_configs && exit 20
+              exit 0'
+          phase=""
+          for i in $(seq 1 60); do
+            phase=$(kubectl -n default get pod ta-netpol-probe -o jsonpath='{.status.phase}')
+            case "$phase" in Succeeded|Failed) break ;; esac
+            sleep 2
+          done
+          code=$(kubectl -n default get pod ta-netpol-probe -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')
+          kubectl -n default logs ta-netpol-probe || true
+          kubectl -n default delete pod ta-netpol-probe --wait=false >/dev/null 2>&1 || true
+          case "$code" in
+            0)  echo "cluster allocator unreachable from outside the collector; node allocator reachable" ;;
+            10) echo "::error::probe pod could not reach the node allocator — the probe is broken, not the policy (phase=$phase)"; exit 1 ;;
+            20) echo "::error::a pod outside the cluster collector read /scrape_configs from the cluster allocator — the NetworkPolicy is missing, mis-selected, or not enforced by this CNI"; exit 1 ;;
+            *)  echo "::error::netpol probe did not complete (phase=$phase, exit=$code)"; exit 1 ;;
+          esac
 
       - name: Show cluster state on failure
         if: failure()

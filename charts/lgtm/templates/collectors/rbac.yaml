@@ -110,9 +110,13 @@ secrets cannot be bounded by resourceNames, so a ClusterRole rule here would
 mean cluster-wide secret read for both allocators to satisfy an informer that
 only ever watches one namespace.
 
-The out-of-the-box trigger lives in the release namespace anyway: the bundled
+The out-of-the-box triggers live in the release namespace anyway: the bundled
 kube-prometheus-stack's prom-stack-operator ServiceMonitor sets tlsConfig.ca to
-the prom-stack-admission webhook CA Secret.
+the prom-stack-admission webhook CA Secret, and since kube-prometheus-stack 90
+its apiserver and CoreDNS ServiceMonitors authenticate with the
+prom-stack-prometheus-token Secret. Reading a Secret is not the same as
+delivering it: the allocator masks credential values on its plain-HTTP
+endpoint unless mTLS or allowInsecureAuthSecrets is set (ADR-0018).
 
 collectors.targetAllocator.secretNamespaces adds namespaces to both sides at
 once — the CRs' prometheusCR.secretNamespaces and the Roles below. Listed

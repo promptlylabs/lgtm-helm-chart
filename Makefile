@@ -39,12 +39,20 @@ template: check-values
 	done
 	@echo "all template permutations rendered"
 
-## Validate rendered manifests against Kubernetes + CRD schemas
+## Validate rendered manifests against Kubernetes + CRD schemas. Custom resources
+## are checked against the CRDs this chart installs first (scripts/crd_schemas.py;
+## needs PyYAML and `make deps`), the community catalog only as a fallback.
+CRD_SCHEMAS := .cache/crd-schemas
+KUBECONFORM := kubeconform -strict -ignore-missing-schemas \
+	-schema-location default \
+	-schema-location '$(CRD_SCHEMAS)/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+	-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+
 kubeconform: check-values
-	helm template lgtm $(CHART) --namespace observability | kubeconform \
-		-strict -ignore-missing-schemas \
-		-schema-location default \
-		-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+	rm -rf $(CRD_SCHEMAS)
+	helm template lgtm $(CHART) --namespace observability --include-crds | python3 scripts/crd_schemas.py $(CRD_SCHEMAS)
+	helm template lgtm $(CHART) --namespace observability | $(KUBECONFORM)
+	helm template lgtm $(CHART) --namespace observability -f $(CHART)/examples/values-targetallocator-mtls.yaml | $(KUBECONFORM)
 
 # The validator needs a checkout of the framework repo for the taxonomy files
 # (the uvx wheel only ships the tooling). Clone once into .cache/.

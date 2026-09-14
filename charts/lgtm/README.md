@@ -111,6 +111,9 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.<node\|cluster\|faro>.securityContext` | `{}` | Container security context for the `otc-container` |
 | `collectors.targetAllocator.secretNamespaces` | `[]` | Extra namespaces the target allocators may read Secrets in, on top of the release namespace. Needed when a ServiceMonitor/PodMonitor **outside** the release namespace references a Secret (`tlsConfig`, `basicAuth`, `authorization`) — see [Target allocator](#target-allocator) |
 | `collectors.<node\|cluster>.targetAllocator.resources` | `64Mi` limit / `5m`+`32Mi` requests | Resources for the target-allocator Deployment. **The default suits small target sets only** — see [Target allocator](#target-allocator) |
+| `collectors.<node\|cluster>.targetAllocator.allowInsecureAuthSecrets` | node `false`, cluster `true` | Serve the credentials that monitors reference to the collector over plain HTTP instead of masking them. On for the cluster allocator so the kube-prometheus-stack apiserver monitor's token gets through — see [Target allocator](#target-allocator) and ADR-0018 |
+| `collectors.<node\|cluster>.targetAllocator.mtls` | `{}` | `spec.targetAllocator.mtls`, verbatim. The recommended way to deliver credentials; when `enabled` it supersedes `allowInsecureAuthSecrets` |
+| `collectors.cluster.targetAllocator.networkPolicy` | `enabled: true`, `extraIngress: []` | NetworkPolicy that admits only the cluster collector to the cluster allocator (only enforced where the CNI supports NetworkPolicy). Replaces the operator's default policies for the cluster collector and its allocator |
 | `collectors.node.*` | enabled | DaemonSet collector: resources, tolerations |
 | `collectors.node.collectAllNetworkInterfaces` | `false` | Collect node network metrics from **all** NICs, not just the default — needed on multi-NIC bare-metal nodes with no default interface (adds an `interface` attribute). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.node.kubeletInsecureSkipVerify` | `true` | Skip TLS verification when the node collector scrapes the kubelet on `:10250`. Set `false` only where kubelet serving certs are signed by the cluster CA — see [Kubelet TLS verification](#kubelet-tls-verification) |
@@ -139,6 +142,42 @@ Each of the node and cluster collectors gets a **target allocator** — a separa
 The chart grants this with a namespaced `Role` + `RoleBinding` in the release namespace rather than a rule on the shared ClusterRole, because that is exactly the scope the informer uses: the operator scopes it to the allocator's own namespace unless told otherwise. `list`/`watch` on Secrets cannot be narrowed with `resourceNames`, so a ClusterRole rule would mean cluster-wide Secret read for both allocators to satisfy an informer that only ever watches one namespace.
 
 If a monitor in **another** namespace references a Secret, list that namespace in `collectors.targetAllocator.secretNamespaces`. That widens both sides together — the CRs' `prometheusCR.secretNamespaces` and the Roles — which is the point of the single key: if the informer scope and the RBAC ever disagreed, the allocator would crashloop on a cache it is not allowed to sync. The release namespace is always included, and the listed namespaces must already exist. Leave it empty and a secret-referencing monitor elsewhere is simply skipped, with a `skipping object` warning in the allocator log and no scrape for that endpoint — degraded, but not fatal.
+
+**Reading a Secret is not delivering it.** The allocator hands the resolved scrape config to its collector, and on its plain-HTTP endpoint it masks every credential value — bearer tokens, `basicAuth` passwords, TLS client keys — as `<secret>` (CA bundles are not secrets and pass through). The collector then sends `Authorization: Bearer <secret>` and the target answers `401`. Real values only reach the collector over **mTLS** between allocator and collector, or with **`allowInsecureAuthSecrets`**, which serves them over plain HTTP ([ADR-0018](../../docs/adrs/0018-targetallocator-secret-transport.md)).
+
+This matters out of the box: since kube-prometheus-stack 90 the bundled apiserver and CoreDNS ServiceMonitors authenticate with a Secret, `prom-stack-prometheus-token`, rather than with the scraper's own token file. So the chart defaults are:
+
+| | `allowInsecureAuthSecrets` | NetworkPolicy | Why |
+|---|---|---|---|
+| cluster allocator | `true` | `true` — only the cluster collector's pods may connect | the apiserver monitor needs its token delivered |
+| node allocator | `false` | none | selects every workload monitor in the cluster; node collectors run `hostNetwork`, so a pod-selector policy cannot fence it |
+
+The cost of the cluster default: anything that can reach `otel-cluster-collector-targetallocator` can read that token from `/scrape_configs`, and it carries the Prometheus ServiceAccount's cluster-wide `get`/`list`/`watch` on pods (full specs, env values included), services, endpoints, nodes and ingresses. The NetworkPolicy narrows that to the cluster collector — **only where your CNI enforces NetworkPolicy**. It *replaces* the policies the operator (≥ 0.158) creates by default for the cluster collector and its allocator: the operator's allocator policy admits any source on the allocator's ports, and NetworkPolicies are additive, so leaving it in place would void the fence. The chart therefore sets `spec.networkPolicy.enabled: false` on that collector CR while its own policy is on. The one thing lost is the operator's egress restriction on the allocator (apiserver only), whose IPs are only known at runtime. The default also means the real token is sent in cleartext to CoreDNS, which does not need it. Setting `kube-prometheus-stack.coreDns.serviceMonitor.authorization: null` in *your* values file stops that. Helm does not honour that `null` from the chart's own `values.yaml`, so the chart cannot ship it for you. If a Prometheus of yours needs to scrape the allocator's own `/metrics`, add a rule to `collectors.cluster.targetAllocator.networkPolicy.extraIngress`.
+
+**Recommended: mTLS.** With `collectors.<node|cluster>.targetAllocator.mtls.enabled: true` the chart renders the block verbatim as `spec.targetAllocator.mtls` and stops rendering `allowInsecureAuthSecrets` for that allocator, so enabling mTLS alone is enough. The collector then fetches its config from `https://<collector>-targetallocator:443`. There are two ways to get the certificates:
+
+- **cert-manager** (the operator's default): install cert-manager, then set `mtls.enabled: true`. The operator creates the Issuer and both certificates; the bundled operator chart already grants it the cert-manager RBAC. See [`examples/values-targetallocator-mtls.yaml`](examples/values-targetallocator-mtls.yaml).
+- **Certificates you manage** (operator ≥ 0.157, no cert-manager): the server certificate must be valid for the short Service name the collector dials, e.g. `otel-cluster-collector-targetallocator`. Keys default to `ca.crt` / `tls.crt` / `tls.key`, so standard `kubernetes.io/tls` Secrets work as-is. The referenced objects must exist in the release namespace, and rotating them needs a pod restart (they are subPath mounts).
+
+  ```yaml
+  collectors:
+    cluster:
+      targetAllocator:
+        mtls:
+          enabled: true
+          useCertManager: false
+          tls:
+            certificateAuthorityCertificate:
+              configMap: { name: ta-mtls-ca }
+            serverCertificate:
+              certificateSecret: { name: ta-mtls-server }
+              keySecret: { name: ta-mtls-server }
+            clientCertificate:
+              certificateSecret: { name: ta-mtls-client }
+              keySecret: { name: ta-mtls-client }
+  ```
+
+The chart does not generate these certificates itself: Helm's `genCA` would issue new ones on every render, which under ArgoCD means every sync.
 
 **Size it for your target set.** `collectors.<node|cluster>.targetAllocator.resources` defaults to a `64Mi` limit with `5m`/`32Mi` requests, and allocator memory tracks the number of discovered target groups, not telemetry volume. That default is adequate **only for small target sets**. A real datapoint from a modest 3-node production cluster: the *cluster* allocator — which selects only the `scope: cluster` monitors, so the smallest target set the chart produces — sits at **52Mi against the 64Mi limit, 81% utilisation with no headroom**; the *node* allocator on the same cluster, which selects every other monitor (19 target groups), **OOMKills at 64Mi outright** (`exitCode: 137`). If you run more than a handful of monitors, raise `collectors.node.targetAllocator.resources.limits.memory` — `128Mi` is a reasonable starting point — and read the [Operations](#operations) note on why an OOMKilling allocator is easy to miss.
 

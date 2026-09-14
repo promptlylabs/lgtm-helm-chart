@@ -48,6 +48,19 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
+  {{- if .Values.collectors.cluster.targetAllocator.networkPolicy.enabled }}
+  # The operator (>= 0.158, operand.networkpolicy on by default) creates its own
+  # NetworkPolicies for this collector and its allocator, and the allocator's
+  # admits ANY source on the allocator's ports. NetworkPolicies are additive, so
+  # it would void the collector-only fence in networkpolicy.yaml, which the
+  # allowInsecureAuthSecrets token depends on (ADR-0018). This CR-level switch is
+  # the only one: the operator copies it onto the generated TargetAllocator, so
+  # it drops both policies. The collector's was ingress from any source on its
+  # own ports, i.e. the pre-0.158 posture.
+  networkPolicy:
+    enabled: false
+  {{- end }}
+
   targetAllocator:
     enabled: true
     allocationStrategy: consistent-hashing
@@ -69,6 +82,13 @@ spec:
       secretNamespaces:
         {{- include "lgtm.targetAllocator.secretNamespaces" . | nindent 8 }}
       {{- end }}
+    # Credential delivery to the collector (ADR-0018). Defaults to
+    # allowInsecureAuthSecrets: the kube-prometheus-stack apiserver/CoreDNS
+    # monitors authenticate with a Secret, which the plain-HTTP endpoint would
+    # otherwise mask. Fenced by networkpolicy.yaml; mTLS replaces it when enabled.
+    {{- with include "lgtm.targetAllocator.secretTransport" .Values.collectors.cluster.targetAllocator }}
+    {{- . | nindent 4 }}
+    {{- end }}
     {{- with .Values.collectors.cluster.targetAllocator.resources }}
     resources:
       {{- toYaml . | nindent 6 }}

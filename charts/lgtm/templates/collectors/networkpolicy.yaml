@@ -1,0 +1,56 @@
+{{- /*
+Ingress fence for the cluster target allocator (ADR-0018).
+
+With allowInsecureAuthSecrets (the default) the allocator serves the credentials
+its monitors reference — the kube-prometheus-stack prom-stack-prometheus-token —
+on its plain-HTTP /scrape_configs. This policy admits only the cluster
+collector's own pods, so the rest of the cluster cannot read the token from
+there. No port restriction: the collector reaches :8080 over HTTP, or :8443 when
+mTLS is enabled.
+
+Selectors are the operator's own SelectorLabels (manifestutils.SelectorLabels):
+component distinguishes allocator from collector pods, and instance is
+"<namespace>.<cr-name>" truncated to 63 characters — the CR name is fixed, so
+both are known at render time.
+
+It REPLACES the operator's own allocator policy rather than adding to it:
+operator >= 0.158 creates one by default that admits any source on the
+allocator's ports, and NetworkPolicies are a union, so leaving it in place would
+make this fence a no-op. cluster-collector.yaml turns the operator's policies off
+(spec.networkPolicy.enabled: false) whenever this one renders. The operator's
+version also restricted allocator egress to the apiserver IPs it discovers at
+runtime; those are not known at render time, so this policy is ingress-only.
+
+Only enforced where the CNI implements NetworkPolicy; elsewhere it is inert.
+There is deliberately no policy for the node allocator: the node collectors run
+hostNetwork, their traffic carries node IPs, and a podSelector cannot match it —
+a policy there would cut the collectors off rather than fence anything. That is
+why the node allocator keeps allowInsecureAuthSecrets off.
+*/ -}}
+{{- if and .Values.collectors.enabled .Values.collectors.cluster.enabled .Values.collectors.cluster.targetAllocator.networkPolicy.enabled }}
+{{- $instance := printf "%s.%s" .Release.Namespace "otel-cluster-collector" | trunc 63 }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-cluster-collector-targetallocator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: opentelemetry-collector
+    component: target-allocator
+    {{- include "lgtm.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: opentelemetry-targetallocator
+      app.kubernetes.io/instance: {{ $instance }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: opentelemetry-collector
+              app.kubernetes.io/instance: {{ $instance }}
+    {{- with .Values.collectors.cluster.targetAllocator.networkPolicy.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,35 @@
+# mTLS between the target allocators and their collectors (ADR-0018).
+#
+# The allocators resolve the Secrets their ServiceMonitors/PodMonitors reference
+# (bearer tokens, basicAuth passwords, TLS client keys) and hand the resulting
+# scrape config to the collectors. On the default plain-HTTP endpoint every
+# credential value is masked as "<secret>". The chart's default works around
+# that for the cluster allocator with allowInsecureAuthSecrets, fenced by a
+# NetworkPolicy. mTLS is the correct fix: credentials only travel over a
+# mutually authenticated connection. With mtls.enabled the chart stops
+# rendering allowInsecureAuthSecrets, so nothing is served in the clear.
+#
+# ── Prerequisite ─────────────────────────────────────────────────────────────
+# cert-manager installed in the cluster. The operator creates a self-signed
+# Issuer plus the allocator's server certificate and the collector's client
+# certificate; the bundled opentelemetry-operator chart already grants it the
+# cert-manager RBAC this needs.
+#
+# No cert-manager? Set useCertManager: false and point mtls.tls at Secrets you
+# manage (operator >= 0.157). The server certificate must be valid for the name
+# the collector dials, otel-cluster-collector-targetallocator (or
+# otel-node-collector-targetallocator), on :443. See the README "Target
+# allocator" section for the full block.
+
+collectors:
+  cluster:
+    targetAllocator:
+      mtls:
+        enabled: true
+  # Optional: only needed if a workload monitor scraped by the node collectors
+  # references a Secret (and its namespace is listed in
+  # collectors.targetAllocator.secretNamespaces).
+  node:
+    targetAllocator:
+      mtls:
+        enabled: true

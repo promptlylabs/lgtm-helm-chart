@@ -74,6 +74,11 @@ spec:
       secretNamespaces:
         {{- include "lgtm.targetAllocator.secretNamespaces" . | nindent 8 }}
       {{- end }}
+    # Credential delivery to the collectors (ADR-0018). Renders nothing by
+    # default: credential values stay masked unless mTLS is configured.
+    {{- with include "lgtm.targetAllocator.secretTransport" .Values.collectors.node.targetAllocator }}
+    {{- . | nindent 4 }}
+    {{- end }}
     {{- with .Values.collectors.node.targetAllocator.resources }}
     resources:
       {{- toYaml . | nindent 6 }}
