@@ -16,6 +16,19 @@
   minimumReleaseAge: "7 days",
   separateMajorMinor: true,
   dependencyDashboard: true,
+  // config:recommended's default ignorePaths minus "**/examples/**": the
+  // Thanos sidecar pin in charts/lgtm/examples/values-thanos.yaml must move with
+  // the umbrella's Query/Store Gateway tag (customManagers below), and the
+  // default silently skipped it. Replaces the default list, not appended to it.
+  ignorePaths: [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+  ],
   // Regenerate Chart.lock when Chart.yaml dependencies change
   // (charts/*.tgz stay gitignored).
   postUpdateOptions: ["helmUpdateSubChartArchives"],
@@ -23,6 +36,12 @@
   // assembled from values.d/ — ADR-0007) and in the example overlay. This custom
   // manager tracks the `# renovate:`-annotated tag across all three files so a
   // bump edits them together and `make check-values` stays green.
+  // The annotation tracks the thanos-io/thanos GitHub releases, not the Quay
+  // image: Quay returns no release timestamps, and with minimumReleaseAge set
+  // Renovate's default minimumReleaseAgeBehaviour (timestamp-required) holds an
+  // update without one forever (v0.42.4 sat "pending" for six weeks). GitHub
+  // releases carry published_at, so the age guard applies, and their tags are
+  // the image tags verbatim (v0.42.4).
   customManagers: [
     {
       customType: "regex",
@@ -96,7 +115,7 @@
     {
       // Thanos image (umbrella Query/Store/Compactor + the sidecar in the overlay),
       // non-major: grouped, chart version bumped, automerged behind lint + smoke.
-      matchPackageNames: ["quay.io/thanos/thanos"],
+      matchPackageNames: ["thanos-io/thanos"],
       matchUpdateTypes: ["minor", "patch"],
       groupName: "thanos image (non-major)",
       labels: ["dependencies"],
@@ -114,7 +133,7 @@
     {
       // Thanos image major: separate PR, never automerged — a Thanos major can
       // change objstore/flag behaviour. Chart bumps a minor (same as upstream majors).
-      matchPackageNames: ["quay.io/thanos/thanos"],
+      matchPackageNames: ["thanos-io/thanos"],
       matchUpdateTypes: ["major"],
       automerge: false,
       labels: ["dependencies", "major-upstream"],

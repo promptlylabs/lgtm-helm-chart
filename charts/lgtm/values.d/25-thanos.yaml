@@ -28,7 +28,7 @@ thanos:
   image:
     registry: quay.io
     repository: thanos/thanos
-    # renovate: datasource=docker depName=quay.io/thanos/thanos
+    # renovate: datasource=github-releases depName=thanos-io/thanos
     tag: v0.41.0
     pullPolicy: IfNotPresent
 
