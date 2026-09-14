@@ -144,8 +144,40 @@ collectors:
   enabled: true
 
   # Override the collector image for the node and cluster collectors. Empty
-  # uses the operator default (opentelemetry-collector-k8s distribution).
+  # uses the operator default (opentelemetry-collector-k8s distribution), so the
+  # collector version follows the bundled operator. The operator generates parts
+  # of the collector config against its own version and upstream advises keeping
+  # the two matched, so move ahead of it only for a specific fix, and note the
+  # target allocators stay on the operator's version either way.
   image: ""
+
+  # spec.upgradeStrategy on every collector CR (ADR-0019): automatic | none.
+  # With automatic (the operator's default) the operator migrates a CR whenever
+  # its status.version differs from the operator's own collector version — and
+  # when the operator is OLDER than that recorded version (a pinned or
+  # rolled-back operator), it requeues the CR every second before reconciling
+  # anything: no config or Deployment change lands, nothing is logged at the
+  # default level, and ArgoCD stays Synced/Healthy. none removes the trigger and
+  # costs nothing here: this chart renders the whole spec on every sync, and the
+  # image still follows the operator. Switching back to automatic later needs
+  # status.version patched to the running operator's collector version first —
+  # see "Operator upgrades" in the chart README.
+  upgradeStrategy: none
+
+  # Let the operator generate its own NetworkPolicies for the collector CRs
+  # (spec.networkPolicy.enabled, ADR-0019). Off by default: which policies make
+  # sense depends on the cluster's CNI, and the operator's cannot know it. Its
+  # target-allocator policy admits any source on the allocator's ports and
+  # allows egress only to the apiserver endpoint IPs it read at startup, as
+  # ipBlocks. On Cilium those IPs carry reserved identities that ipBlock rules
+  # never match, so the allocator cannot reach the apiserver and crashloops; on
+  # any CNI the IPs go stale when the control-plane IPs change. Enable only on a
+  # CNI where that rule works, or write your own policies outside the chart.
+  # Never applied to the cluster collector while
+  # collectors.cluster.targetAllocator.networkPolicy renders — the operator's
+  # allow-any allocator policy would void that fence.
+  operatorNetworkPolicies:
+    enabled: false
 
   # resourcedetection processor for the node collector. Disabled when no
   # detectors are configured. Example for Azure (see examples/values-azure.yaml):
@@ -293,12 +325,12 @@ collectors:
     # Default false (ADR-0017). The chart's otlp_config demotes non-indexed
     # attributes to structured metadata, which Loki caps per log line at
     # max_structured_metadata_size (64KB stock). Over-cap records are dropped
-    # WHOLE, body included, and silently: Loki answers OTLP with a partial
-    # success, so the collector logs nothing and only
-    # loki_discarded_samples_total{reason="structured_metadata_too_large"}
-    # moves — which the bundled lgtm-loki-discarded-samples-burst rule now
-    # watches. It also ships every field twice, since json_parser leaves the
-    # raw body in place.
+    # WHOLE, body included. Loki stores the rest of the push and answers 400, so
+    # the collector logs "Dropping data" and counts the entire batch as
+    # send_failed, which overstates the loss; the exact count is
+    # loki_discarded_samples_total{reason="structured_metadata_too_large"},
+    # watched by the bundled lgtm-loki-discarded-samples-burst rule. It also
+    # ships every field twice, since json_parser leaves the raw body in place.
     # traceId/spanId are promoted to the LogRecord's trace_id/span_id either
     # way, so the Grafana derived-field trace link works with this off. Set
     # true only if you have queries that depend on the flattened fields.
@@ -431,12 +463,13 @@ collectors:
       # reach it (both :8080 HTTP and :8443 mTLS). It is what keeps the token
       # served under allowInsecureAuthSecrets away from the rest of the
       # cluster, and it is only enforced where the CNI implements
-      # NetworkPolicy. It replaces the policies the operator (>= 0.158) creates
-      # by default for this collector and its allocator, because the operator's
-      # allocator policy admits any source and NetworkPolicies are additive;
-      # disabling this key brings the operator's policies back. extraIngress is
-      # appended verbatim as additional NetworkPolicyIngressRule entries — e.g.
-      # to let a Prometheus you run scrape the allocator's own /metrics.
+      # NetworkPolicy. While it renders, the operator's own policies stay off on
+      # this collector even with collectors.operatorNetworkPolicies enabled: the
+      # operator's allocator policy admits any source, and NetworkPolicies are
+      # additive. Disabling this key leaves the allocator unfenced unless
+      # collectors.operatorNetworkPolicies is on. extraIngress is appended
+      # verbatim as additional NetworkPolicyIngressRule entries — e.g. to let a
+      # Prometheus you run scrape the allocator's own /metrics.
       networkPolicy:
         enabled: true
         extraIngress: []

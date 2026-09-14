@@ -90,9 +90,12 @@ and it is checked against that burst at render time (see
 lgtm.collector.validateBatchCeiling). max_size splits an oversized accumulation
 into conforming requests rather than rejecting it.
 
-int64 on the byte values is load-bearing: Helm decodes YAML numbers as
-float64, so an unwrapped 1048576 renders as 1.048576e+06 and the collector
-rejects the config at startup.
+int64 on the byte values only keeps the rendered CR readable and diff-stable:
+Helm decodes YAML numbers as float64, so an unwrapped 1048576 renders as
+1.048576e+06. It does not survive the operator, which decodes spec.config as
+float64 and re-encodes it, so values from 1e6 up reach the ConfigMap as
+1.048576e+06 / 4.194304e+06 either way. The collector decodes those into its
+int64 fields without complaint (checked with `validate` on 0.158.0).
 
 batch::sizer is allowed to differ from sending_queue::sizer — the field exists
 to allow exactly that — so the queue keeps its `requests` default. Upstream's
@@ -187,6 +190,39 @@ mtls:
 {{- else if .allowInsecureAuthSecrets -}}
 allowInsecureAuthSecrets: true
 {{- end -}}
+{{- end -}}
+
+{{/*
+Operator-owned behaviour on a collector CR (ADR-0019): the two spec fields that
+hand a decision to the operator instead of this chart. Rendered on every
+collector CR so that none of them inherits a webhook default.
+
+networkPolicy.enabled — the CR field is the operator's only switch. Its feature
+gate (operand.networkpolicy, on by default since 0.158) only makes the webhook
+stamp `enabled: true` onto a CR where the field is unset, on any create or
+update, and that stamp outlives an operator downgrade. The allocator policy it
+generates admits any source and allows egress only to the apiserver endpoint
+IPs the operator discovered at startup, as ipBlocks: those never match on CNIs
+that give node IPs a reserved identity (Cilium), and go stale on any CNI when
+the control-plane IPs change. Off unless collectors.operatorNetworkPolicies
+turns it on, and never on a CR whose allocator this chart fences itself
+(`fenced`), since NetworkPolicies are a union and the operator's allow-any
+ingress would void the fence.
+
+upgradeStrategy — with `automatic`, an operator older than the version in a
+CR's status.version requeues that CR every second before reconciling anything,
+silently and forever. `none` removes the trigger; the collector image still
+follows the operator whenever spec.image is unset.
+
+Takes a dict: `root` (the root context) and `fenced` (whether
+templates/collectors/networkpolicy.yaml renders for this collector's
+allocator). Include at spec level, e.g. with nindent 2.
+*/}}
+{{- define "lgtm.collector.operatorPosture" -}}
+{{- $collectors := .root.Values.collectors -}}
+upgradeStrategy: {{ $collectors.upgradeStrategy }}
+networkPolicy:
+  enabled: {{ and $collectors.operatorNetworkPolicies.enabled (not .fenced) }}
 {{- end -}}
 
 {{/*

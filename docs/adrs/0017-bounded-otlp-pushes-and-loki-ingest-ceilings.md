@@ -4,7 +4,7 @@ type: adr
 title: Bound OTLP pushes in bytes and state Loki's ingest ceilings
 status: accepted
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-14
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -59,17 +59,23 @@ them unrelated logs from other pods that happened to share the node and the flus
 whose stanza default is `attributes`, so every top-level key of every JSON log line became a log
 attribute — while the chart's own `otlp_config` demotes non-indexed attributes to structured
 metadata, which Loki caps per line at `max_structured_metadata_size` (64KB stock). Over-cap records
-are dropped **whole**, body included, and silently: Loki answers OTLP with a partial success, so the
-collector logs nothing. It also shipped every field twice, since `json_parser` leaves the raw body in
-place. Cost on that cluster: 187 records / 27.5 MB in 24h, unattributed for over a week. The parser
-existed only to expose `traceId`/`spanId` to `transform/trace_context`.
+are dropped **whole**, body included. Loki stores the rest of the push and answers `400`, and the
+exporter, treating the 400 as permanent, counts the entire batch as failed — so the collector's own
+signal overstated the loss by three orders of magnitude, and the exact count,
+`loki_discarded_samples_total{reason="structured_metadata_too_large"}`, had no rule. (This ADR first
+said Loki answers with an OTLP partial success and the collector logs nothing. Loki v3.7.7 has no
+partial-success path: `ValidateEntry` rejects the entry and the push returns 400. The original
+claim came from collector logs that had already rotated.) It also shipped every field twice, since
+`json_parser` leaves the raw body in place. Cost on that cluster: 187 records / 27.5 MB in 24h,
+unattributed for over a week. The parser existed only to expose `traceId`/`spanId` to
+`transform/trace_context`.
 
 None of this was visible from the chart's own rules. `lgtm-loki-otlp-ingest-errors` described
 "per-tenant ingestion limits and out-of-order or too-old timestamps" but selected
 `status_code=~"5.."`. Rate limits are 429 and out-of-order/too-old are 400 — both 4xx. Over 24h on
 `route="otlp_v1_logs"`: 204: 28291, 400: 76, 429: 55, **5xx: 0**. The rule read exactly zero for the
-entire incident. And `loki_discarded_samples_total`, the only signal that exposes the silent
-structured-metadata drops at all, had no rule anywhere in the chart.
+entire incident. And `loki_discarded_samples_total`, the only signal that counts the
+structured-metadata drops exactly, had no rule anywhere in the chart.
 
 ## Decision
 
@@ -127,19 +133,29 @@ structured-metadata drops at all, had no rule anywhere in the chart.
    server errors, and point at the 4xx rule for rejections. Two rules are added, both burst-shaped
    after `lgtm-otelcol-export-drop-burst` (`for: 0`, 30m window, threshold 0):
 
-   - `lgtm-loki-otlp-ingest-rejected-burst` — `sum by (status_code)` over 4xx on
+   - `lgtm-loki-otlp-ingest-rejected-burst` — `sum by (status_code)` over non-429 4xx on
      `route="otlp_v1_logs"`.
-   - `lgtm-loki-discarded-samples-burst` — `sum by (reason)` over `loki_discarded_samples_total`.
+   - `lgtm-loki-discarded-samples-burst` — `sum by (reason)` over `loki_discarded_samples_total`,
+     excluding the 429-class reasons (`rate_limited`, `per_stream_rate_limit`, `stream_limit`).
 
    A ratio rule cannot see this class of failure: the incident measured 131 rejections against 28422
-   pushes — 0.46%, under any sane ratio threshold, while dropping over a thousand records at a time.
-   A 4xx is permanent data loss; a 5xx is retryable and goes back through the sending queue. They
-   need different rule shapes, not a wider regex.
+   pushes — 0.46%, under any sane ratio threshold. A 400 is permanent loss for the entries it names;
+   a 5xx is retryable and goes back through the sending queue. They need different rule shapes, not
+   a wider regex.
+
+   *Amended 2026-09-14:* both rules first counted 429 too, on the reading that every 4xx is
+   permanent. It is not. Loki rejects a rate-limited push before writing anything, and the exporter
+   retries it; `rate_limited` is incremented with the request's full line count on every attempt. A
+   production cluster paged on every 429 while losing nothing (a day with 7 × 429 and 0 × 400 had
+   zero send failures), which was about half of its pages. A 429 becomes loss only when the retries
+   run out — as in this ADR's own incident, where the push exceeded the burst and could never
+   succeed — and that is recorded once, as `send_failed`, which `lgtm-otelcol-export-drop-burst`
+   already watches. The byte cap in (1) makes the over-burst case impossible by construction.
 
 ## Consequences
 
 Log pushes are bounded by construction, and the bound is checked against the receiver at render
-time rather than by convention. Both previously-silent failure modes report themselves.
+time rather than by convention. Both previously-unwatched failure modes report themselves.
 
 Under load the collectors send more, smaller requests; metrics and traces batch by bytes rather than
 by data-point count, with no correctness impact. A consumer who lowers `ingestion_burst_size_mb`
@@ -164,7 +180,7 @@ broken, and a consumer cannot diagnose a 429 whose cause is 1024 × their own me
 removing it; the deadlock returns for any workload whose mean record size clears the new ratio.
 
 **Keep the flattening and raise `max_structured_metadata_size`.** Treats the symptom, pays
-cardinality and storage cost for fields nothing in the chart reads, and leaves the drops silent.
+cardinality and storage cost for fields nothing in the chart reads, and leaves the drops unwatched.
 
 **Widen the existing rule's regex to `[45]..`.** Insufficient, and wrong. Insufficient because
 131/28422 = 0.46% stays under the 5% threshold. Wrong because it merges a retryable failure with

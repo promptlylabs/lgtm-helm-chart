@@ -4,7 +4,7 @@ type: adr
 title: Re-stamp stale Kubernetes event timestamps in the cluster collector
 status: accepted
 created: 2026-08-28
-updated: 2026-09-01
+updated: 2026-09-14
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -26,7 +26,7 @@ related:
 
 The cluster collector ships Kubernetes events to Loki as structured logs: `k8s_events` receiver →
 `resource/events` → `otlp_http/loki` (ADR-0005). On a production cluster running 0.19.0, that
-pipeline lost a batch **every 30 minutes**, wholesale:
+pipeline lost most of a batch **every 30 minutes**:
 
 ```
 entry with timestamp 2026-08-27 01:12:10.90504 +0000 UTC ignored, reason:
@@ -49,11 +49,14 @@ The receiver sees the watch `MODIFIED` and emits a record carrying the *original
 replay is staler than the last, without bound. Legacy `core/v1` events are unaffected: their
 `lastTimestamp` is refreshed on repeat, so their record time tracks reality.
 
-**3. Loki rejects them and the exporter drops the batch.** Loki's ingester accepts unordered writes
-only back to `max_chunk_age / 2` — one hour at the default two — and answers older entries with
-HTTP 400. The OTLP exporter classifies 400 as `Permanent`, so it does not retry and the *whole*
-batch is discarded, including the fresh entries that shared it (12 of 15, above). The queue and
-retry machinery of ADR-0009 are no help: permanent means permanent.
+**3. Loki rejects them and the exporter gives up.** Loki's ingester accepts unordered writes only
+back to `max_chunk_age / 2` — one hour at the default two. It stores the entries inside that window
+(3 of the 15 above), ignores the rest and answers the push with HTTP 400. The OTLP exporter
+classifies 400 as `Permanent`, so it does not retry, and it counts the *whole* batch as failed —
+its send-failed counter reports all 15. (This ADR originally read that as the fresh entries being
+lost too; Loki's ingester, `pkg/ingester/stream.go` at v3.7.7, stores them.)
+The 12 stale entries are gone, and the queue and retry machinery of ADR-0009 are no help:
+permanent means permanent.
 
 **Nothing in the chart surfaced it.** The bundled `lgtm-otelcol-exporter-failures` rule (ADR-0015)
 is `rate(...[5m]) > 0` with `for: 10m`. A burst every 30 minutes keeps the rate non-zero for about
@@ -95,8 +98,9 @@ any particular cluster. Every install with `collectors.cluster.enabled` hits it 
 
 **The companion alert rule is part of this decision, not a nicety.** The stable Grafana uid remains
 `lgtm-otelcol-export-drop-burst`, but its title and annotations call the condition an export failure:
-the send-failed counters include permanent failures such as this incident's 400 and retryable failures
-such as a 5xx that enters the sending queue and may later succeed. The rule uses `increase(...[30m])`
+the send-failed counters move once per request the exporter gives up on — at once for a permanent
+failure such as this incident's 400, or when the retries for a 429/5xx run out — and for a Loki 400
+they count the whole batch even though Loki stored part of it. The rule uses `increase(...[30m])`
 with `for: 0`, alongside the existing 5m-rate rule which stays as the sustained-failure signal. Both
 rules group by `job`, `pod` and `exporter`, so a notification identifies the affected collector and
 export path. Same reasoning as ADR-0014 treating its smoke-test assertions as part of the fix: shipping
@@ -133,8 +137,9 @@ Target Allocator rule's `from: 3600` for `[1h]`.
   collector restarted after a long outage replays its queue with rewritten times. That is the same
   trade, and the alternative is the same 400.
 - The burst rule can fire on a single export failure anywhere in the stack. That is intended; it is
-  a `warning`. A permanent 4xx drops the rejected batch, while a retryable 5xx goes through the
-  sending queue and may succeed, so the alert does not claim every failure is already data loss.
+  a `warning`. A Loki 400 loses only the entries Loki rejected, while an exhausted 429/5xx loses
+  the whole batch, so the alert does not claim how much data was lost —
+  `loki_discarded_samples_total` has the per-entry count for 400s.
   Installs that want only sustained failure can pause it by uid.
 - The alert pack now carries two rules over the same metrics with different windows. The header
   comment in `alerts/otel-collector.yaml` explains why, so neither is later removed as a duplicate.

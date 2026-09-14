@@ -92,6 +92,14 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "image": { "type": "string" },
+        "upgradeStrategy": { "type": "string", "enum": ["automatic", "none"] },
+        "operatorNetworkPolicies": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
         "resourceDetection": {
           "type": "object",
           "additionalProperties": false,

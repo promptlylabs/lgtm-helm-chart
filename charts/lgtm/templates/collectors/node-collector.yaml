@@ -46,6 +46,12 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
+  # upgradeStrategy + networkPolicy (ADR-0019, see lgtm.collector.operatorPosture).
+  # Left to the webhook, this CR got the operator's allocator policy, whose
+  # apiserver egress rule cut the allocator off on Cilium (CrashLoopBackOff, no
+  # ServiceMonitor scrapes cluster-wide).
+  {{- include "lgtm.collector.operatorPosture" (dict "root" . "fenced" false) | nindent 2 }}
+
   # Target Allocator — per-node strategy: each DaemonSet pod scrapes only
   # targets on its own node. Targets without a node assignment are ignored
   # (control-plane components are the cluster collector's job).

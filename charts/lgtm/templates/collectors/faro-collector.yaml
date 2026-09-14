@@ -42,6 +42,9 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
+  # upgradeStrategy + networkPolicy (ADR-0019, see lgtm.collector.operatorPosture).
+  {{- include "lgtm.collector.operatorPosture" (dict "root" . "fenced" false) | nindent 2 }}
+
   {{- /*
   No persistentQueue on this collector: it has no queue volume, so its exporters
   pass storage=false to the sendingQueue helper. Passing true would name a

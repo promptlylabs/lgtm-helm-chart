@@ -200,6 +200,21 @@ jobs:
             echo "$w: priorityClass=$pc, no initContainers"
           done
 
+          # ADR-0019: every collector CR pins upgradeStrategy none and the
+          # operator's NetworkPolicies off, so the operator must not have
+          # generated any. kindnet matches node IPs by ipBlock, so the Cilium
+          # allocator crashloop cannot reproduce here — this pins the posture.
+          for cr in otel-node-collector otel-cluster-collector; do
+            us=$(kubectl -n observability get opentelemetrycollector $cr -o jsonpath='{.spec.upgradeStrategy}')
+            np=$(kubectl -n observability get opentelemetrycollector $cr -o jsonpath='{.spec.networkPolicy.enabled}')
+            [ "$us" = none ] && [ "$np" = false ] \
+              || { echo "::error::$cr has upgradeStrategy=$us networkPolicy.enabled=$np, want none/false"; exit 1; }
+            echo "$cr: upgradeStrategy=$us, networkPolicy.enabled=$np"
+          done
+          nps=$(kubectl -n observability get networkpolicy -l app.kubernetes.io/managed-by=opentelemetry-operator -o name)
+          [ -z "$nps" ] || { echo "::error::operator-generated NetworkPolicies present: $nps"; exit 1; }
+          echo "no operator-generated NetworkPolicies"
+
       - name: Assert telemetry flows end to end
         run: |
           set -euo pipefail
