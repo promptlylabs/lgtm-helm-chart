@@ -69,6 +69,13 @@ spec:
       secretNamespaces:
         {{- include "lgtm.targetAllocator.secretNamespaces" . | nindent 8 }}
       {{- end }}
+    # Credential delivery to the collector (ADR-0018). Defaults to
+    # allowInsecureAuthSecrets: the kube-prometheus-stack apiserver/CoreDNS
+    # monitors authenticate with a Secret, which the plain-HTTP endpoint would
+    # otherwise mask. Fenced by networkpolicy.yaml; mTLS replaces it when enabled.
+    {{- with include "lgtm.targetAllocator.secretTransport" .Values.collectors.cluster.targetAllocator }}
+    {{- . | nindent 4 }}
+    {{- end }}
     {{- with .Values.collectors.cluster.targetAllocator.resources }}
     resources:
       {{- toYaml . | nindent 6 }}

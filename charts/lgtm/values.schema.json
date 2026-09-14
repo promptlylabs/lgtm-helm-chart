@@ -164,7 +164,9 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "resources": { "type": "object" }
+                "resources": { "type": "object" },
+                "allowInsecureAuthSecrets": { "type": "boolean" },
+                "mtls": { "type": "object" }
               }
             },
             "resources": { "type": "object" },
@@ -186,7 +188,20 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "resources": { "type": "object" }
+                "resources": { "type": "object" },
+                "allowInsecureAuthSecrets": { "type": "boolean" },
+                "mtls": { "type": "object" },
+                "networkPolicy": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": { "type": "boolean" },
+                    "extraIngress": {
+                      "type": "array",
+                      "items": { "type": "object" }
+                    }
+                  }
+                }
               }
             },
             "resources": { "type": "object" }

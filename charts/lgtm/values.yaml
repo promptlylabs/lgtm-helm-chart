@@ -246,6 +246,13 @@ collectors:
     # references a Secret; the allocator otherwise skips that endpoint with a
     # "skipping object" warning. Listed namespaces must already exist, or the
     # Role/RoleBinding fail to apply.
+    # Reading the Secret is only half of it. The allocator hands the resolved
+    # scrape config to its collector, and on the plain-HTTP endpoint it masks
+    # every credential value (basicAuth passwords, bearer tokens, TLS client
+    # keys) as "<secret>" — CA bundles are not secrets and pass through. The real
+    # values only reach the collector when that collector's allocator runs mTLS
+    # or allowInsecureAuthSecrets; see collectors.<node|cluster>.targetAllocator
+    # and ADR-0018.
     secretNamespaces: []
 
   node:
@@ -333,6 +340,21 @@ collectors:
         requests:
           cpu: 5m
           memory: 32Mi
+      # How this allocator hands Secret-sourced credentials to the collector
+      # (ADR-0018). Off by default: this allocator selects every workload
+      # monitor in the cluster, so serving secrets over plain HTTP here would
+      # expose all of their credentials to anything that can reach the
+      # allocator Service. And unlike the cluster allocator there is no
+      # NetworkPolicy to fence it: the node collectors run hostNetwork, so a
+      # pod-selector rule cannot match them. If a workload monitor needs its
+      # credentials delivered, use mtls below.
+      allowInsecureAuthSecrets: false
+      # mTLS between this allocator and its collectors — the correct way to
+      # deliver credentials. Rendered verbatim as spec.targetAllocator.mtls and,
+      # when enabled, supersedes allowInsecureAuthSecrets. Same shape as
+      # collectors.cluster.targetAllocator.mtls; see the README "Target
+      # allocator" section for the cert-manager and bring-your-own recipes.
+      mtls: {}
     resources:
       limits:
         memory: 512Mi
@@ -367,6 +389,54 @@ collectors:
         requests:
           cpu: 5m
           memory: 32Mi
+      # Serve Secret-sourced credentials to the collector over plain HTTP
+      # (ADR-0018). On by default because kube-prometheus-stack >= 90 makes the
+      # apiserver and CoreDNS monitors authenticate with a Secret
+      # (prom-stack-prometheus-token) instead of the scraper's own token file.
+      # Without this the allocator masks the token as "<secret>" and every
+      # apiserver scrape fails 401.
+      # The cost: anything that can reach this allocator's Service can read that
+      # token from /scrape_configs, and it carries the Prometheus ServiceAccount's
+      # cluster-wide get/list/watch on pods, services, endpoints, nodes and
+      # ingresses. networkPolicy below narrows that to the cluster collector on
+      # clusters whose CNI enforces NetworkPolicy. mTLS is the correct fix; this
+      # is the stop-gap until you enable it.
+      allowInsecureAuthSecrets: true
+      # mTLS between this allocator and its collector. Rendered verbatim as
+      # spec.targetAllocator.mtls; when enabled it supersedes
+      # allowInsecureAuthSecrets (the chart stops rendering it), so enabling
+      # mTLS alone is enough. Two ways to get the certificates:
+      #   cert-manager installed in the cluster (the operator requests them):
+      #     mtls:
+      #       enabled: true
+      #   certificates you manage (operator >= 0.157, no cert-manager). The
+      #   server certificate must be valid for the name the collector dials,
+      #   otel-cluster-collector-targetallocator (short Service name, port 443):
+      #     mtls:
+      #       enabled: true
+      #       useCertManager: false
+      #       tls:
+      #         certificateAuthorityCertificate:
+      #           configMap: { name: ta-mtls-ca }        # key defaults to ca.crt
+      #         serverCertificate:
+      #           certificateSecret: { name: ta-mtls-server }
+      #           keySecret: { name: ta-mtls-server }
+      #         clientCertificate:
+      #           certificateSecret: { name: ta-mtls-client }
+      #           keySecret: { name: ta-mtls-client }
+      # See the README "Target allocator" section and
+      # examples/values-targetallocator-mtls.yaml.
+      mtls: {}
+      # Ingress fence for this allocator: only the cluster collector's pods may
+      # reach it (both :8080 HTTP and :8443 mTLS). It is what keeps the token
+      # served under allowInsecureAuthSecrets away from the rest of the
+      # cluster, and it is only enforced where the CNI implements
+      # NetworkPolicy. extraIngress is appended verbatim as additional
+      # NetworkPolicyIngressRule entries — e.g. to let a Prometheus you run
+      # scrape the allocator's own /metrics.
+      networkPolicy:
+        enabled: true
+        extraIngress: []
     resources:
       limits:
         memory: 384Mi

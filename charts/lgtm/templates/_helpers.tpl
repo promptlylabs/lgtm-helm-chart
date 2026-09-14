@@ -172,6 +172,24 @@ read it back with fromYamlArray to range over it.
 {{- end -}}
 
 {{/*
+How a target allocator delivers Secret-sourced credentials to its collector
+(ADR-0018). On its plain-HTTP /scrape_configs the allocator masks every secret
+value as "<secret>"; only mTLS or allowInsecureAuthSecrets gets the real value
+to the collector. mTLS supersedes the insecure flag: with it enabled the flag is
+not rendered even when set, so enabling mTLS alone never leaves the plain-HTTP
+path serving secrets too. Takes the per-collector targetAllocator values dict;
+emits spec.targetAllocator fields (possibly nothing).
+*/}}
+{{- define "lgtm.targetAllocator.secretTransport" -}}
+{{- if and .mtls .mtls.enabled -}}
+mtls:
+  {{- toYaml .mtls | nindent 2 }}
+{{- else if .allowInsecureAuthSecrets -}}
+allowInsecureAuthSecrets: true
+{{- end -}}
+{{- end -}}
+
+{{/*
 Thanos helpers (ADR-0010). The umbrella-owned Query/Store Gateway/Compactor use
 fixed names (one release per cluster, ADR-0001/0002), so the endpoints below are
 plain service DNS names, not release-prefixed.
