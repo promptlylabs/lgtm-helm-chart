@@ -4,7 +4,7 @@ type: adr
 title: Automate dependency updates with Renovate, gated by a kind smoke test
 status: accepted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-09-14
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -31,7 +31,7 @@ We adopt **Renovate via the hosted Mend GitHub App** (scoped to this repository)
 - **Version mapping** (the prometheus-community convention): dep patch → chart patch, dep minor → chart minor, dep **major → chart minor** plus mandatory human review. Chart **majors are reserved for breaking changes to this chart's own values contract** — the umbrella's semver describes *its* interface, not upstream internals. Renovate bumps `Chart.yaml` `version` in the same PR via `bumpVersions` templated on the update type.
 - **Automerge**: non-major updates merge automatically once the required checks pass; majors carry the `major-upstream` label and wait for a reviewer, who adapts `values.d/` and the collector configs if needed and decides whether to escalate the chart bump to a major.
 - **Gate**: a new required `smoke` check installs the full stack on a throwaway kind cluster on every PR (two-phase install, collectors Ready, then asserts a test span reaches Tempo, host metrics reach Prometheus, container logs reach Loki, and Grafana provisioned the datasources/dashboards). This is what makes automerge defensible — it catches runtime breaks, not just render breaks. `lint` (template permutations + kubeconform) remains required as well.
-- **Cadence and supply-chain guard**: non-major updates arrive as one grouped PR per week (Monday); `minimumReleaseAge: 7 days` so we never consume a release younger than a week — compromised or broken releases are usually yanked within days.
+- **Cadence and supply-chain guard**: non-major updates arrive as one grouped PR per week (Monday); `minimumReleaseAge: 7 days` so we never consume a release younger than a week — compromised or broken releases are usually yanked within days. The guard needs a release timestamp: with Renovate's default `minimumReleaseAgeBehaviour: timestamp-required`, an update whose datasource returns none is held as "pending" forever. The `docker` datasource gets none from Quay, GHCR or ECR — the Thanos image sat pending for six weeks on Quay — so such dependencies are tracked through a datasource that has timestamps, e.g. `github-releases` (Thanos is tracked as `thanos-io/thanos`, whose release tags are the image tags).
 - Releases stay fully automatic (merge → chart-releaser publishes, since the version was bumped in the PR). Clients pin `targetRevision`, so automation only keeps the shelf stocked; nothing reaches a cluster until a client bumps.
 - The static `artifacthub.io/changes` annotation is dropped — it would go stale on automated releases, and automating it would need a bot token whose PR commits re-trigger CI (the complexity we avoided by choosing the hosted app). GitHub release notes are auto-generated instead.
 

@@ -4,7 +4,7 @@ type: adr
 title: Optional Thanos sidecar and query stack for long-term metrics
 status: accepted
 created: 2026-07-03
-updated: 2026-07-03
+updated: 2026-09-14
 owners: [ca-moes]
 visibility: internal
 audience: [platform-engineer]
@@ -35,7 +35,7 @@ Add optional Thanos support, **disabled by default**, in two halves that keep th
 - **Sidecar** — configured via the `kube-prometheus-stack.prometheus.prometheusSpec.thanos` pass-through and `prometheus.thanosService` (gRPC 10901). Object storage is a Thanos `objstore.yml` in an **existing Secret** the consumer provides out of band (e.g. External Secrets Operator) — credentials are never templated into the chart, matching the Loki/Grafana ESO pattern. The operator auto-disables local compaction when object storage is set; we also set `disableCompaction: true` explicitly. Because Helm cannot compute sub-chart values from an umbrella toggle, the sidecar is delivered through the `examples/values-thanos.yaml` overlay, not a boolean.
 - **Query / Store Gateway / Compactor** — **hand-rolled umbrella-owned templates** (`templates/thanos/`) gated by real `thanos.*` booleans, reusing the same objstore Secret. Grafana's Prometheus datasource auto-repoints to Thanos Query when the stack is enabled (the `prometheus` UID and all correlations are preserved). The Compactor is a singleton (Recreate, one replica).
 
-The Thanos image is pinned (matching the operator's sidecar default) and Renovate-managed like every other dependency (ADR-0006/0008) via a custom manager that edits the values.d fragment, the generated `values.yaml`, and the overlay together.
+The Thanos image is pinned (matching the operator's sidecar default) and Renovate-managed like every other dependency (ADR-0006/0008) via a custom manager that edits the values.d fragment, the generated `values.yaml`, and the overlay together. It tracks the `thanos-io/thanos` GitHub releases rather than the Quay image, because Quay returns no release timestamps and the `minimumReleaseAge` guard would otherwise hold every Thanos update forever (ADR-0008). The overlay only counts because `renovate.json5` drops `**/examples/**` from `config:recommended`'s default `ignorePaths`; before that, the sidecar pin was silently never bumped.
 
 ## Alternatives considered
 
