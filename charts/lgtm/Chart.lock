@@ -1,13 +1,13 @@
 dependencies:
 - name: kube-prometheus-stack
   repository: https://prometheus-community.github.io/helm-charts
-  version: 88.6.1
+  version: 88.6.5
 - name: grafana
   repository: https://grafana-community.github.io/helm-charts
-  version: 13.0.1
+  version: 13.2.2
 - name: loki
   repository: https://grafana-community.github.io/helm-charts
-  version: 18.11.7
+  version: 18.12.1
 - name: tempo
   repository: https://grafana-community.github.io/helm-charts
   version: 2.3.0
@@ -17,5 +17,5 @@ dependencies:
 - name: opentelemetry-operator
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.122.0
-digest: sha256:7407bb81186af507e20da0fd596474760bb274d06d0a7ffe75d796c2de7a26bd
-generated: "2026-09-07T15:51:40.848796712Z"
+digest: sha256:8e8f335fafeba2eee22bb4efe45615ccb1ca039caad54c60509d53021d1d207e
+generated: "2026-09-14T02:42:09.899756457Z"
