@@ -71,9 +71,11 @@ groups:
             Collector job {{ `{{ $labels.job }}` }}, pod {{ `{{ $labels.pod }}` }}, exporter
             {{ `{{ $labels.exporter }}` }} failed to send at least one span, metric point or log
             record. Unlike the sustained-failure rule this fires on a single burst, which is how
-            a periodic rejection looks. Check the collector logs for the backend's status code;
-            a 4xx is permanent and drops the rejected batch, while a retryable 5xx goes through
-            the sending queue and may succeed on retry.
+            a periodic rejection looks. Check the collector logs for the backend's status code.
+            It counts only requests the exporter gave up on: a permanent 4xx at once, a 429 or
+            5xx once its retries run out. For Loki a 400 is per entry — Loki stored the rest of
+            the batch, so this count overstates the loss and loki_discarded_samples_total has the
+            real one — while an exhausted 429 lost the whole batch.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "otel-collector")) | nindent 10 }}
         data:

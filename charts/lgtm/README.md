@@ -63,9 +63,23 @@ helm upgrade lgtm promptlylabs/lgtm -n observability \
 
 Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, `kube-prometheus-stack.*`, …) — see each upstream chart's documentation. The umbrella's own keys:
 
+> **Changed in 0.27.0** (ADR-0019) — the collector CRs no longer inherit two operator defaults. No values need changing, but read the cleanup step.
+>
+> - **Operator NetworkPolicies are off on every collector CR** (`collectors.operatorNetworkPolicies.enabled: false`). The operator's admission webhook stamps `spec.networkPolicy.enabled: true` onto any CR that leaves it unset. The target-allocator policy that follows admits any source and allows egress only to the apiserver endpoint IPs the operator read at startup, as `ipBlock`s. On Cilium those IPs carry reserved identities that `ipBlock` rules never match, so the allocator cannot reach the apiserver and crashloops, and every ServiceMonitor/PodMonitor scrape stops. The cluster collector's own fence (`collectors.cluster.targetAllocator.networkPolicy`) is unchanged.
+> - **`spec.upgradeStrategy: none` on every collector CR** (`collectors.upgradeStrategy`). With the operator's default, `automatic`, an operator older than the version recorded in a CR's `status.version` freezes that CR silently — see [Operator upgrades](#operator-upgrades).
+>
+> **Cleanup, once per cluster.** The operator deletes a collector's own policy when the field flips, but **never a target allocator's**. Any cluster that reconciled a node CR under operator ≥ 0.158, or ran chart 0.21.0–0.25.x, can still carry one. The cluster allocator's copy admits any source, and NetworkPolicies are a union, so it **silently voids the fence around the allocator's token** (ADR-0018). Check, and delete what it lists:
+>
+> ```bash
+> kubectl -n observability get networkpolicy -l app.kubernetes.io/managed-by=opentelemetry-operator
+> kubectl -n observability delete networkpolicy --ignore-not-found \
+>   otel-node-collector-targetallocator-networkpolicy \
+>   otel-cluster-collector-targetallocator-networkpolicy
+> ```
+
 > **Breaking in 0.23.0** (ADR-0017) — JSON log bodies are no longer flattened into attributes.
 >
-> The node collector's filelog `json_parser` merged *every* top-level key of a JSON log body into log attributes, which the chart's `otlp_config` then demotes to structured metadata — capped per line by Loki's `max_structured_metadata_size` (64KB stock). Over-cap records were dropped **whole**, body included, and silently: Loki answers OTLP with a partial success, so nothing in the collector reports it. The parser existed only to expose `traceId`/`spanId`, which are now extracted through OTTL scratch that never leaves the processor.
+> The node collector's filelog `json_parser` merged *every* top-level key of a JSON log body into log attributes, which the chart's `otlp_config` then demotes to structured metadata — capped per line by Loki's `max_structured_metadata_size` (64KB stock). Over-cap records were dropped **whole**, body included. Loki stores the rest of the push and answers `400`, so the collector counts the entire batch as failed. That overstates the loss, and the real count (`loki_discarded_samples_total{reason="structured_metadata_too_large"}`) had no rule. The parser existed only to expose `traceId`/`spanId`, which are now extracted through OTTL scratch that never leaves the processor.
 >
 > For JSON log lines, every field other than `traceId`/`spanId` disappears from Loki structured metadata. Bodies are unchanged, and `trace_id`/`span_id` still populate, so the Grafana derived-field trace link is unaffected. **If you have queries or dashboards reading the flattened fields**, set `collectors.node.flattenJsonLogBodies: true` to restore the old behaviour — along with the unbounded structured metadata, which the new `lgtm-loki-discarded-samples-burst` rule will now tell you about.
 
@@ -97,7 +111,9 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `lgtm.alerting.templates` | `[]` | Notification templates, in Grafana provisioning format |
 | `lgtm.metaMonitoring.enabled` | `false` | Reserve the observability stack's own `scope: observability` ServiceMonitors for a separate meta-monitoring stack; default `false` scrapes them in-cluster |
 | `collectors.enabled` | `true` | Master switch for all collector CRs |
-| `collectors.image` | `""` | Override the collector image (node + cluster) |
+| `collectors.image` | `""` | Override the collector image (node + cluster). Empty follows the bundled operator's default, which upstream advises keeping matched to the operator version; the target allocators stay on the operator's version either way |
+| `collectors.upgradeStrategy` | `none` | `spec.upgradeStrategy` on every collector CR: `automatic` or `none`. `automatic` lets an operator older than a CR's recorded version freeze it silently — see [Operator upgrades](#operator-upgrades) |
+| `collectors.operatorNetworkPolicies.enabled` | `false` | Let the operator generate its own NetworkPolicies for the collector CRs. Its allocator egress rule breaks on Cilium and goes stale when control-plane IPs change — enable only where it works. Never applied to the cluster collector while its own fence renders |
 | `collectors.resourceDetection.detectors` | `[]` | resourcedetection processor detectors (e.g. `[azure]`) |
 | `collectors.batch.maxSizeBytes` | `4194304` (4 MiB) | Hard byte ceiling on a single exporter push, applied to every exporter on all three collectors. Must stay **below** `loki.loki.limits_config.ingestion_burst_size_mb` — that burst is the token bucket's *capacity*, so a larger push is rejected with 429 even against a completely idle Loki, and the exporter then drops the whole batch. The chart fails the render if the two ever cross |
 | `collectors.batch.minSizeBytes` | `1048576` (1 MiB) | Batch size that triggers an early send. A quiet collector still flushes on `flushTimeout` |
@@ -105,7 +121,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.persistentQueue.enabled` | `false` | Back exporter sending queues with a `file_storage` extension on durable storage (node → emptyDir, cluster → PVC) so queued batches survive a restart. See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.persistentQueue.node.backend` | `emptyDir` | What backs the DaemonSet queue: `emptyDir` (no chown initContainer, SELinux-safe, bounded by `sizeLimit`) or `hostPath` (also survives pod recreation). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.persistentQueue.cluster.chownInitContainer` | `false` | Run the root chown initContainer on the cluster collector. Needed only on storage classes whose CSI driver does not apply `fsGroup` (file/NFS-backed: EFS, Azure Files, `nfs-subdir-provisioner`) |
-| `collectors.node.flattenJsonLogBodies` | `false` | Merge every top-level key of a JSON log body into log attributes (and so into Loki structured metadata). Off by default because over-cap records are dropped whole and silently — see the 0.23.0 note above and ADR-0017 |
+| `collectors.node.flattenJsonLogBodies` | `false` | Merge every top-level key of a JSON log body into log attributes (and so into Loki structured metadata). Off by default because over-cap records are dropped whole — see the 0.23.0 note above and ADR-0017 |
 | `collectors.<node\|cluster\|faro>.priorityClassName` | `system-node-critical` / `system-cluster-critical` / `""` | PriorityClass per collector. The two `system-*` classes are built into every cluster and are what makes kubelet keep admitting the pod under `DiskPressure` — set to `""` to opt out |
 | `collectors.<node\|cluster\|faro>.podSecurityContext` | `fsGroup: 10001` (node, cluster) / `{}` (faro) | Pod security context. `fsGroup` is what makes the queue volume writable; add `seLinuxOptions` here on Enforcing clusters — see [SELinux-enforcing clusters](#selinux-enforcing-clusters) |
 | `collectors.<node\|cluster\|faro>.securityContext` | `{}` | Container security context for the `otc-container` |
@@ -113,7 +129,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.<node\|cluster>.targetAllocator.resources` | `64Mi` limit / `5m`+`32Mi` requests | Resources for the target-allocator Deployment. **The default suits small target sets only** — see [Target allocator](#target-allocator) |
 | `collectors.<node\|cluster>.targetAllocator.allowInsecureAuthSecrets` | node `false`, cluster `true` | Serve the credentials that monitors reference to the collector over plain HTTP instead of masking them. On for the cluster allocator so the kube-prometheus-stack apiserver monitor's token gets through — see [Target allocator](#target-allocator) and ADR-0018 |
 | `collectors.<node\|cluster>.targetAllocator.mtls` | `{}` | `spec.targetAllocator.mtls`, verbatim. The recommended way to deliver credentials; when `enabled` it supersedes `allowInsecureAuthSecrets` |
-| `collectors.cluster.targetAllocator.networkPolicy` | `enabled: true`, `extraIngress: []` | NetworkPolicy that admits only the cluster collector to the cluster allocator (only enforced where the CNI supports NetworkPolicy). Replaces the operator's default policies for the cluster collector and its allocator |
+| `collectors.cluster.targetAllocator.networkPolicy` | `enabled: true`, `extraIngress: []` | NetworkPolicy that admits only the cluster collector to the cluster allocator (only enforced where the CNI supports NetworkPolicy). While it renders, the operator's own policies stay off on the cluster collector regardless of `collectors.operatorNetworkPolicies` |
 | `collectors.node.*` | enabled | DaemonSet collector: resources, tolerations |
 | `collectors.node.collectAllNetworkInterfaces` | `false` | Collect node network metrics from **all** NICs, not just the default — needed on multi-NIC bare-metal nodes with no default interface (adds an `interface` attribute). See [Bare-metal / hostNetwork](#bare-metal--hostnetwork) |
 | `collectors.node.kubeletInsecureSkipVerify` | `true` | Skip TLS verification when the node collector scrapes the kubelet on `:10250`. Set `false` only where kubelet serving certs are signed by the cluster CA — see [Kubelet TLS verification](#kubelet-tls-verification) |
@@ -152,7 +168,7 @@ This matters out of the box: since kube-prometheus-stack 90 the bundled apiserve
 | cluster allocator | `true` | `true` — only the cluster collector's pods may connect | the apiserver monitor needs its token delivered |
 | node allocator | `false` | none | selects every workload monitor in the cluster; node collectors run `hostNetwork`, so a pod-selector policy cannot fence it |
 
-The cost of the cluster default: anything that can reach `otel-cluster-collector-targetallocator` can read that token from `/scrape_configs`, and it carries the Prometheus ServiceAccount's cluster-wide `get`/`list`/`watch` on pods (full specs, env values included), services, endpoints, nodes and ingresses. The NetworkPolicy narrows that to the cluster collector — **only where your CNI enforces NetworkPolicy**. It *replaces* the policies the operator (≥ 0.158) creates by default for the cluster collector and its allocator: the operator's allocator policy admits any source on the allocator's ports, and NetworkPolicies are additive, so leaving it in place would void the fence. The chart therefore sets `spec.networkPolicy.enabled: false` on that collector CR while its own policy is on. The one thing lost is the operator's egress restriction on the allocator (apiserver only), whose IPs are only known at runtime. The default also means the real token is sent in cleartext to CoreDNS, which does not need it. Setting `kube-prometheus-stack.coreDns.serviceMonitor.authorization: null` in *your* values file stops that. Helm does not honour that `null` from the chart's own `values.yaml`, so the chart cannot ship it for you. If a Prometheus of yours needs to scrape the allocator's own `/metrics`, add a rule to `collectors.cluster.targetAllocator.networkPolicy.extraIngress`.
+The cost of the cluster default: anything that can reach `otel-cluster-collector-targetallocator` can read that token from `/scrape_configs`, and it carries the Prometheus ServiceAccount's cluster-wide `get`/`list`/`watch` on pods (full specs, env values included), services, endpoints, nodes and ingresses. The NetworkPolicy narrows that to the cluster collector — **only where your CNI enforces NetworkPolicy** — and it must be the only policy on that allocator. The operator generates its own whenever a CR carries `spec.networkPolicy.enabled: true`, and its allocator policy admits any source on the allocator's ports. NetworkPolicies are additive, so it would void the fence. The chart therefore renders that field `false` on the cluster collector while its own policy is on, even with `collectors.operatorNetworkPolicies` enabled, and the fence is ingress-only (the operator's apiserver egress rule is not portable across CNIs). **An allocator policy the operator already created is not removed when the field flips** — see the 0.27.0 note under [Configuration](#configuration). The default also means the real token is sent in cleartext to CoreDNS, which does not need it. Setting `kube-prometheus-stack.coreDns.serviceMonitor.authorization: null` in *your* values file stops that. Helm does not honour that `null` from the chart's own `values.yaml`, so the chart cannot ship it for you. If a Prometheus of yours needs to scrape the allocator's own `/metrics`, add a rule to `collectors.cluster.targetAllocator.networkPolicy.extraIngress`.
 
 **Recommended: mTLS.** With `collectors.<node|cluster>.targetAllocator.mtls.enabled: true` the chart renders the block verbatim as `spec.targetAllocator.mtls` and stops rendering `allowInsecureAuthSecrets` for that allocator, so enabling mTLS alone is enough. The collector then fetches its config from `https://<collector>-targetallocator:443`. There are two ways to get the certificates:
 
@@ -187,7 +203,7 @@ Alerting is **Grafana-managed** (ADR-0015): Alertmanager is disabled, and rules,
 
 **The shipped rules** live in `alerts/`, one pack per component, each gated on that component being enabled exactly like the dashboards: `otel-collector`, `loki`, `prometheus`, `tempo`. They watch ingest and query error rates, queue and WAL saturation, compaction health, and — the one that prompted the pack — **Target Allocator restarts**. Each allocator is a separate Deployment whose health is not reflected in the parent `OpenTelemetryCollector` CR status, so an ArgoCD Application reports `Healthy` right through an allocator crashloop; we have seen that hide one for 8 days and ~1800 restarts while every ServiceMonitor in the cluster flapped in and out of the scrape set (see [Target allocator](#target-allocator) and [Operations](#operations)).
 
-Two rules in the Loki pack are shaped differently on purpose. `lgtm-loki-otlp-ingest-rejected-burst` and `lgtm-loki-discarded-samples-burst` count occurrences over a 30-minute window at threshold 0 (`for: 0`) rather than taking an error ratio, because a 4xx rejection is *permanent* data loss whether or not it is a large fraction of traffic — the incident behind ADR-0017 measured 0.46% of pushes while dropping over a thousand records at a time. `loki_discarded_samples_total` is also the only signal in the entire stack for drops Loki reports as an OTLP partial success; its `reason` label (`rate_limited`, `structured_metadata_too_large`, `line_too_long`) is what tells you which limit you hit.
+Two rules in the Loki pack are shaped differently on purpose. `lgtm-loki-otlp-ingest-rejected-burst` and `lgtm-loki-discarded-samples-burst` count occurrences over a 30-minute window at threshold 0 (`for: 0`) rather than taking an error ratio, because a `400` is *permanent* loss for the entries it rejects, whether or not it is a large fraction of traffic — the incident behind ADR-0017 measured 0.46% of pushes. Loki stores the rest of a `400`'d push, so `loki_discarded_samples_total` is the exact count, and its `reason` label (`structured_metadata_too_large`, `line_too_long`, `too_far_behind`, …) is what tells you which limit you hit. The collector's `send_failed` counts the whole batch. Both rules leave out `429` and its reasons (`rate_limited`, `per_stream_rate_limit`, `stream_limit`). Loki writes nothing from a rate-limited push and the exporter retries it, so a `429` is only loss once the retries run out, and that surfaces once in `lgtm-otelcol-export-drop-burst`.
 
 Two things to know about them:
 
@@ -326,6 +342,25 @@ plus the computed ones via `lgtm.endpoints.*`.
 
 - **prometheus-operator already installed**: set `kube-prometheus-stack.crds.enabled=false` and disable the in-chart operator (`kube-prometheus-stack.prometheusOperator.enabled=false`), or disable the whole dependency with `kube-prometheus-stack.enabled=false`.
 - **OTel operator already installed**: set `opentelemetry-operator.enabled=false` — the collector CRs keep working against the existing operator (CRDs must be v1beta1-capable).
+
+### Operator upgrades
+
+The collector version follows the bundled operator: with `collectors.image` empty, the operator runs its own default `opentelemetry-collector-k8s` image. Newer collector releases arrive with the next operator chart bump.
+
+The collector CRs set `spec.upgradeStrategy: none` (`collectors.upgradeStrategy`). The operator's default, `automatic`, has a failure mode that nothing reports. Each CR records the collector version its operator last reconciled in `status.version`. With `automatic`, an operator whose own collector version differs from that value runs its upgrade routine and requeues the CR **one second later, before building its ConfigMap, workloads or status**. When the operator is *older* than the recorded version — a pinned or rolled-back operator — the routine changes nothing, so this repeats forever:
+
+- No collector config or workload change lands, and the CR status is never refreshed.
+- Nothing is logged at the default level, and ArgoCD stays `Synced`/`Healthy`.
+- Restarting the operator does not help: the trigger lives in the CR status.
+
+With `none` the trigger is gone, and there is nothing the chart needs the upgrade routine for: it renders the full spec on every sync. The one thing to know is that `none` also stops the operator updating `status.version`. So **before switching a CR back to `automatic`**, or to recover a CR frozen under `automatic`, set its status to the running operator's collector version:
+
+```bash
+kubectl -n observability patch opentelemetrycollector otel-node-collector \
+  --subresource=status --type=merge -p '{"status":{"version":"0.158.0"}}'
+```
+
+Repeat for `otel-cluster-collector` (and `otel-faro-collector` if enabled). Forward operator upgrades are safe either way.
 
 ## Operations
 

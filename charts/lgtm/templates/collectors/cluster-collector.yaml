@@ -48,18 +48,12 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
-  {{- if .Values.collectors.cluster.targetAllocator.networkPolicy.enabled }}
-  # The operator (>= 0.158, operand.networkpolicy on by default) creates its own
-  # NetworkPolicies for this collector and its allocator, and the allocator's
-  # admits ANY source on the allocator's ports. NetworkPolicies are additive, so
-  # it would void the collector-only fence in networkpolicy.yaml, which the
-  # allowInsecureAuthSecrets token depends on (ADR-0018). This CR-level switch is
-  # the only one: the operator copies it onto the generated TargetAllocator, so
-  # it drops both policies. The collector's was ingress from any source on its
-  # own ports, i.e. the pre-0.158 posture.
-  networkPolicy:
-    enabled: false
-  {{- end }}
+  # upgradeStrategy + networkPolicy (ADR-0019, see lgtm.collector.operatorPosture).
+  # networkPolicy is forced off while networkpolicy.yaml fences this allocator:
+  # the operator's allocator policy admits ANY source, NetworkPolicies are a
+  # union, and the allowInsecureAuthSecrets token depends on the fence (ADR-0018).
+  # The operator copies this field onto the generated TargetAllocator.
+  {{- include "lgtm.collector.operatorPosture" (dict "root" . "fenced" .Values.collectors.cluster.targetAllocator.networkPolicy.enabled) | nindent 2 }}
 
   targetAllocator:
     enabled: true
@@ -192,8 +186,9 @@ spec:
       # lastTimestamp null, series block — the receiver sees the watch MODIFIED and re-emits
       # the record still carrying the original eventTime, hours stale and staler every round.
       # Loki's ingester accepts unordered writes only back to max_chunk_age/2 (1h at the
-      # default 2h), rejects those entries with 400 "entry too far behind", and the exporter
-      # treats 400 as Permanent and drops the WHOLE batch. Legacy core/v1 events are
+      # default 2h) and rejects those entries with 400 "entry too far behind". The rest of the
+      # push is stored; the exporter treats the 400 as Permanent and counts the WHOLE batch as
+      # send_failed, so that counter overstates the loss. Legacy core/v1 events are
       # unaffected: their lastTimestamp is refreshed on repeat.
       #
       # Re-stamp as observed-now. Nothing is destroyed — the receiver already preserves the

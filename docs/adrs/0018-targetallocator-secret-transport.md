@@ -18,6 +18,7 @@ related:
   superseded_by: []
   see_also:
     - ./0006-latest-upstream-versions-reviewed-bumps.md
+    - ./0019-collector-crs-own-their-operator-posture.md
 ---
 
 # ADR-0018 — How target allocators deliver Secret-sourced credentials to the collectors
@@ -63,13 +64,19 @@ allocator deliver their credentials:**
 - A **NetworkPolicy** on the cluster allocator admits only the cluster collector's pods
   (`collectors.cluster.targetAllocator.networkPolicy`, on by default, with `extraIngress` for
   additional sources). Selectors are the operator's own `SelectorLabels` — `component` plus
-  `instance: <namespace>.<cr-name>`. It **replaces** the operator's default policies for that
-  collector: operator 0.158 promoted `operand.networkpolicy` to on-by-default, and the allocator
-  policy it creates admits any source on the allocator's ports. NetworkPolicies are a union, so that
-  policy voided the fence — the first smoke run proved it, with a probe pod reading
-  `/scrape_configs` from outside the collector. The chart sets `spec.networkPolicy.enabled: false` on
-  the cluster collector CR while its own policy is on; that is the only switch, and the operator
-  copies it onto the generated TargetAllocator.
+  `instance: <namespace>.<cr-name>`. It must be the **only** policy on that allocator. The operator
+  generates its own whenever the CR carries `spec.networkPolicy.enabled: true`, and operator 0.158
+  made its webhook stamp that onto any CR that leaves the field unset (promoting
+  `operand.networkpolicy` to on-by-default; the gate drives only that default, generation reads
+  only the field). The allocator policy it creates admits any source on the allocator's ports.
+  NetworkPolicies are a union, so that policy voided the fence — the first smoke run proved it,
+  with a probe pod reading `/scrape_configs` from outside the collector. The chart renders
+  `spec.networkPolicy.enabled: false` on the cluster collector CR while its own policy is on; that
+  is the only switch, and the operator copies it onto the generated TargetAllocator. Since ADR-0019
+  the operator's policies are off on every collector CR by default, and this CR stays off while the
+  fence renders even when a consumer turns them on. The operator does not delete an allocator policy
+  it already created when the field flips, so clusters that ran chart 0.21–0.25 need the one-off
+  cleanup in the chart README's 0.27.0 note before this fence holds.
 - The **node allocator** stays masked (`allowInsecureAuthSecrets: false`). It selects every workload
   monitor in the cluster, and the node collectors run `hostNetwork`, so no pod-selector policy could
   fence it.
@@ -113,9 +120,10 @@ The smoke test now asserts that apiserver metrics actually arrive, not only that
   is documented as the recommended setup.
 - Disabling the operator's policies for the cluster collector drops two things beyond the
   allocator's allow-all ingress: the collector's own ingress policy (any source, its declared ports
-  only — the pre-0.158 posture without it is open ingress), and the allocator's egress restriction to
-  the apiserver IPs the operator discovers at runtime. The chart cannot reproduce the latter at
-  render time, so its policy is ingress-only.
+  only; without it ingress is open), and the allocator's egress restriction to the apiserver
+  endpoint IPs the operator discovers at startup. The chart cannot reproduce the latter at render
+  time, and ADR-0019 found it unsafe to keep anyway (it never matches on Cilium and goes stale when
+  control-plane IPs change), so the chart's policy is ingress-only.
 - The real token is also sent, in cleartext, to CoreDNS, which does not need it. Users can set
   `kube-prometheus-stack.coreDns.serviceMonitor.authorization: null` in their own values.
 - kube-prometheus-stack now renders a long-lived `kubernetes.io/service-account-token` Secret in the
