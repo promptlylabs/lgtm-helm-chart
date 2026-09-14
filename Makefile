@@ -1,4 +1,5 @@
 CHART := charts/lgtm
+RETRY := scripts/retry.sh
 
 .PHONY: values check-values deps lint validate-dashboards validate-alerts template kubeconform docs-validate all
 
@@ -10,13 +11,21 @@ values:
 check-values:
 	python3 scripts/assemble_values.py --check
 
-## Fetch chart dependencies pinned in Chart.lock
+## Fetch chart dependencies pinned in Chart.lock. Every download is retried with
+## backoff (scripts/retry.sh): the tarballs are GitHub release assets, which can
+## 504 from CI runners for minutes. The build is skipped when charts/lgtm/charts
+## already holds every dependency at its pinned version, which is what lets CI
+## restore them from a cache. The repo adds always run: ct lint needs them.
 deps:
-	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
-	helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update
-	helm repo add grafana https://grafana.github.io/helm-charts --force-update
-	helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update
-	helm dependency build $(CHART)
+	$(RETRY) helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+	$(RETRY) helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update
+	$(RETRY) helm repo add grafana https://grafana.github.io/helm-charts --force-update
+	$(RETRY) helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update
+	@if helm dependency list $(CHART) | awk 'NR > 1 && NF && $$NF != "ok" { bad = 1 } END { exit bad }'; then \
+		echo "$(CHART)/charts already holds every pinned dependency, skipping download"; \
+	else \
+		$(RETRY) helm dependency build $(CHART); \
+	fi
 
 lint: check-values validate-dashboards validate-alerts
 	helm lint $(CHART)
