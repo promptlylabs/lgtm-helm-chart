@@ -30,6 +30,16 @@ jobs:
       - name: Check generated values.yaml is in sync with values.d/
         run: make check-values
 
+      # Same cache as smoke.yaml. Caches written on main are the only ones this
+      # job can read (PR caches are not visible to main), so a release after
+      # any non-dependency change downloads nothing; `make deps` retries the
+      # rest (GitHub release assets can 504 for minutes).
+      - name: Cache chart dependencies
+        uses: actions/cache@v6
+        with:
+          path: charts/lgtm/charts
+          key: chart-deps-${{ runner.os }}-${{ hashFiles('charts/lgtm/Chart.lock') }}
+
       - name: Build chart dependencies
         run: make deps
 
