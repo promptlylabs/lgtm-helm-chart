@@ -63,7 +63,13 @@ allocator deliver their credentials:**
 - A **NetworkPolicy** on the cluster allocator admits only the cluster collector's pods
   (`collectors.cluster.targetAllocator.networkPolicy`, on by default, with `extraIngress` for
   additional sources). Selectors are the operator's own `SelectorLabels` — `component` plus
-  `instance: <namespace>.<cr-name>`.
+  `instance: <namespace>.<cr-name>`. It **replaces** the operator's default policies for that
+  collector: operator 0.158 promoted `operand.networkpolicy` to on-by-default, and the allocator
+  policy it creates admits any source on the allocator's ports. NetworkPolicies are a union, so that
+  policy voided the fence — the first smoke run proved it, with a probe pod reading
+  `/scrape_configs` from outside the collector. The chart sets `spec.networkPolicy.enabled: false` on
+  the cluster collector CR while its own policy is on; that is the only switch, and the operator
+  copies it onto the generated TargetAllocator.
 - The **node allocator** stays masked (`allowInsecureAuthSecrets: false`). It selects every workload
   monitor in the cluster, and the node collectors run `hostNetwork`, so no pod-selector policy could
   fence it.
@@ -105,6 +111,11 @@ The smoke test now asserts that apiserver metrics actually arrive, not only that
   included), services, endpoints, endpointslices, nodes and ingresses, plus `/metrics`. On CNIs that
   do not enforce NetworkPolicy the fence is inert. This is accepted as a stop-gap, and it is why mTLS
   is documented as the recommended setup.
+- Disabling the operator's policies for the cluster collector drops two things beyond the
+  allocator's allow-all ingress: the collector's own ingress policy (any source, its declared ports
+  only — the pre-0.158 posture without it is open ingress), and the allocator's egress restriction to
+  the apiserver IPs the operator discovers at runtime. The chart cannot reproduce the latter at
+  render time, so its policy is ingress-only.
 - The real token is also sent, in cleartext, to CoreDNS, which does not need it. Users can set
   `kube-prometheus-stack.coreDns.serviceMonitor.authorization: null` in their own values.
 - kube-prometheus-stack now renders a long-lived `kubernetes.io/service-account-token` Secret in the

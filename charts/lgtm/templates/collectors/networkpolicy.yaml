@@ -13,6 +13,14 @@ component distinguishes allocator from collector pods, and instance is
 "<namespace>.<cr-name>" truncated to 63 characters — the CR name is fixed, so
 both are known at render time.
 
+It REPLACES the operator's own allocator policy rather than adding to it:
+operator >= 0.158 creates one by default that admits any source on the
+allocator's ports, and NetworkPolicies are a union, so leaving it in place would
+make this fence a no-op. cluster-collector.yaml turns the operator's policies off
+(spec.networkPolicy.enabled: false) whenever this one renders. The operator's
+version also restricted allocator egress to the apiserver IPs it discovers at
+runtime; those are not known at render time, so this policy is ingress-only.
+
 Only enforced where the CNI implements NetworkPolicy; elsewhere it is inert.
 There is deliberately no policy for the node allocator: the node collectors run
 hostNetwork, their traffic carries node IPs, and a podSelector cannot match it —

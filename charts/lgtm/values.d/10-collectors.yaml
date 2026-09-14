@@ -301,9 +301,12 @@ collectors:
       # reach it (both :8080 HTTP and :8443 mTLS). It is what keeps the token
       # served under allowInsecureAuthSecrets away from the rest of the
       # cluster, and it is only enforced where the CNI implements
-      # NetworkPolicy. extraIngress is appended verbatim as additional
-      # NetworkPolicyIngressRule entries — e.g. to let a Prometheus you run
-      # scrape the allocator's own /metrics.
+      # NetworkPolicy. It replaces the policies the operator (>= 0.158) creates
+      # by default for this collector and its allocator, because the operator's
+      # allocator policy admits any source and NetworkPolicies are additive;
+      # disabling this key brings the operator's policies back. extraIngress is
+      # appended verbatim as additional NetworkPolicyIngressRule entries — e.g.
+      # to let a Prometheus you run scrape the allocator's own /metrics.
       networkPolicy:
         enabled: true
         extraIngress: []

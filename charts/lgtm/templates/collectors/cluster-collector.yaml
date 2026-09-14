@@ -48,6 +48,19 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
+  {{- if .Values.collectors.cluster.targetAllocator.networkPolicy.enabled }}
+  # The operator (>= 0.158, operand.networkpolicy on by default) creates its own
+  # NetworkPolicies for this collector and its allocator, and the allocator's
+  # admits ANY source on the allocator's ports. NetworkPolicies are additive, so
+  # it would void the collector-only fence in networkpolicy.yaml, which the
+  # allowInsecureAuthSecrets token depends on (ADR-0018). This CR-level switch is
+  # the only one: the operator copies it onto the generated TargetAllocator, so
+  # it drops both policies. The collector's was ingress from any source on its
+  # own ports, i.e. the pre-0.158 posture.
+  networkPolicy:
+    enabled: false
+  {{- end }}
+
   targetAllocator:
     enabled: true
     allocationStrategy: consistent-hashing
