@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.27.0
+version: 0.27.1
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -31,29 +31,29 @@ maintainers:
 dependencies:
   # https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
   - name: kube-prometheus-stack
-    version: 90.0.0
+    version: 90.2.0
     repository: https://prometheus-community.github.io/helm-charts
     condition: kube-prometheus-stack.enabled
   # https://artifacthub.io/packages/helm/grafana-community/grafana
   # (chart moved from grafana.github.io to grafana-community in January 2026)
   - name: grafana
-    version: 13.2.2
+    version: 13.2.4
     repository: https://grafana-community.github.io/helm-charts
     condition: grafana.enabled
   # https://artifacthub.io/packages/helm/grafana-community/loki
   # (chart moved to grafana-community in March 2026; grafana.github.io 7.x is GEL-only)
   - name: loki
-    version: 18.12.1
+    version: 18.13.0
     repository: https://grafana-community.github.io/helm-charts
     condition: loki.enabled
   # https://artifacthub.io/packages/helm/grafana-community/tempo — single-binary chart
   - name: tempo
-    version: 2.3.0
+    version: 2.4.0
     repository: https://grafana-community.github.io/helm-charts
     condition: tempo.enabled
   # https://artifacthub.io/packages/helm/grafana/pyroscope — NOT migrated, still grafana.github.io
   - name: pyroscope
-    version: 2.2.1
+    version: 2.3.1
     repository: https://grafana.github.io/helm-charts
     condition: pyroscope.enabled
   # https://artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-operator
