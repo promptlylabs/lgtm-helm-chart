@@ -5,8 +5,19 @@ datasources sidecar (label grafana_datasource: "1").
 The $$ sequences are Grafana provisioning-file escapes for a literal $ —
 $${namespace} reaches Grafana as ${namespace}, $$__tags as $__tags. Helm does
 not interpret them.
+
+Each datasource renders only when its component is in this release OR an
+external endpoint is configured via lgtm.endpoints.*, and every link to another
+datasource (correlations, exemplars, derived fields, traces-to-*) follows the
+same condition for its target. A correlation whose targetUID does not exist
+fails provisioning outright and Grafana exits at startup (#59); the jsonData
+links would only render dead buttons, but they are gated the same way.
 */ -}}
 {{- if .Values.lgtm.datasources.enabled }}
+{{- $prometheus := or (index .Values "kube-prometheus-stack" "enabled") .Values.lgtm.endpoints.prometheus }}
+{{- $loki := or .Values.loki.enabled .Values.lgtm.endpoints.loki }}
+{{- $tempo := or .Values.tempo.enabled .Values.lgtm.endpoints.tempoQuery }}
+{{- $pyroscope := or .Values.pyroscope.enabled .Values.lgtm.endpoints.pyroscope }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,9 +30,7 @@ data:
   lgtm-datasources.yaml: |-
     apiVersion: 1
     datasources:
-      {{- /* Each datasource renders only when its component is in this
-      release OR an external endpoint is configured via lgtm.endpoints.* */}}
-      {{- if or (index .Values "kube-prometheus-stack" "enabled") .Values.lgtm.endpoints.prometheus }}
+      {{- if $prometheus }}
       # Prometheus — exemplars point at Tempo; correlations link metrics to logs.
       # url follows Thanos Query when the long-term stack is enabled (ADR-0010),
       # otherwise the in-cluster Prometheus; uid stays "prometheus" either way.
@@ -35,9 +44,12 @@ data:
         jsonData:
           httpMethod: POST
           timeInterval: 30s
+          {{- if $tempo }}
           exemplarTraceIdDestinations:
             - datasourceUid: tempo
               name: traceID
+          {{- end }}
+        {{- if $loki }}
         correlations:
           # Metrics → Logs: click a pod name → see its logs
           - targetUID: loki
@@ -68,9 +80,10 @@ data:
               transformations:
                 - type: regex
                   expression: "(?<namespace>.+)"
+        {{- end }}
       {{- end }}
 
-      {{- if or .Values.loki.enabled .Values.lgtm.endpoints.loki }}
+      {{- if $loki }}
       # Loki — derived trace links plus reverse correlations (Logs → Metrics)
       - name: Loki
         type: loki
@@ -81,6 +94,7 @@ data:
         isDefault: false
         jsonData:
           maxLines: 1000
+          {{- if $tempo }}
           derivedFields:
             - datasourceUid: tempo
               matcherType: label
@@ -88,6 +102,8 @@ data:
               name: TraceID
               url: "$${__value.raw}"
               urlDisplayLabel: "View Trace"
+          {{- end }}
+        {{- if $prometheus }}
         correlations:
           # Logs → Metrics: link on log line → see pod CPU/memory
           - targetUID: prometheus
@@ -120,9 +136,10 @@ data:
                 - type: regex
                   field: "labels"
                   expression: '"k8s_namespace_name": ?"(?<namespace>[^"]+)"'
+        {{- end }}
       {{- end }}
 
-      {{- if or .Values.tempo.enabled .Values.lgtm.endpoints.tempoQuery }}
+      {{- if $tempo }}
       # Tempo — distributed tracing with links to logs, metrics and profiles
       - name: Tempo
         type: tempo
@@ -138,6 +155,7 @@ data:
           streamingEnabled:
             search: false
             metrics: false
+          {{- if $loki }}
           tracesToLogsV2:
             datasourceUid: loki
             spanStartTimeShift: "-1h"
@@ -151,6 +169,8 @@ data:
                 value: "k8s_namespace_name"
               - key: "k8s.pod.name"
                 value: "k8s_pod_name"
+          {{- end }}
+          {{- if $prometheus }}
           tracesToMetrics:
             datasourceUid: prometheus
             spanStartTimeShift: "-1h"
@@ -165,19 +185,24 @@ data:
                 query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags, status_code="STATUS_CODE_ERROR"}[5m]))'
               - name: "Duration (p95)"
                 query: 'histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])) by (le))'
+          {{- end }}
           nodeGraph:
             enabled: true
+          {{- if $prometheus }}
           serviceMap:
             datasourceUid: prometheus
+          {{- end }}
+          {{- if $pyroscope }}
           tracesToProfiles:
             datasourceUid: pyroscope
             profileTypeId: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
             tags:
               - key: "service.name"
                 value: "service_name"
+          {{- end }}
       {{- end }}
 
-      {{- if or .Values.pyroscope.enabled .Values.lgtm.endpoints.pyroscope }}
+      {{- if $pyroscope }}
       # Pyroscope — continuous profiling
       - name: Pyroscope
         type: grafana-pyroscope-datasource

@@ -259,6 +259,50 @@ jobs:
           echo "$both" | grep -q 'lgtm-alerting-contactpoints' || { echo "contactPoints should render"; exit 1; }
           echo "alert rule gating OK"
 
+      # Every datasource link (correlations, exemplars, derived fields,
+      # traces-to-*) must target a datasource that is actually provisioned. A
+      # correlation to a missing uid fails Grafana's provisioning and Grafana
+      # exits at startup (#59), so check each component switched off alone and
+      # all of them together.
+      - name: Helm template (datasources — assert no dangling links)
+        run: |
+          check() {
+            helm template lgtm charts/lgtm/ --namespace observability "$@" \
+              --show-only templates/grafana/datasources.yaml \
+            | python3 -c '
+          import sys, yaml
+          cm = yaml.safe_load(sys.stdin)
+          sources = yaml.safe_load(cm["data"]["lgtm-datasources.yaml"])["datasources"] or []
+          uids = {s["uid"] for s in sources}
+          def refs(node):
+              if isinstance(node, dict):
+                  for k, v in node.items():
+                      if k in ("targetUID", "datasourceUid"):
+                          yield v
+                      yield from refs(v)
+              elif isinstance(node, list):
+                  for v in node:
+                      yield from refs(v)
+          bad = sorted({(s["uid"], r) for s in sources for r in refs(s) if r not in uids})
+          if bad:
+              sys.exit("dangling datasource links (from, to): %s; provisioned: %s" % (bad, sorted(uids)))
+          ' || { echo "with: $*"; exit 1; }
+          }
+          check
+          check --set kube-prometheus-stack.enabled=false
+          check --set loki.enabled=false
+          check --set tempo.enabled=false
+          check --set pyroscope.enabled=false
+          check --set kube-prometheus-stack.enabled=false --set loki.enabled=false \
+                --set tempo.enabled=false --set pyroscope.enabled=false
+          # An external endpoint keeps the datasource, and its links, in place.
+          check --set loki.enabled=false --set lgtm.endpoints.loki=http://loki.example:3100
+          helm template lgtm charts/lgtm/ --namespace observability --set loki.enabled=false \
+              --set lgtm.endpoints.loki=http://loki.example:3100 \
+              --show-only templates/grafana/datasources.yaml | grep -q 'targetUID: loki' \
+            || { echo "an external Loki endpoint should keep the metrics-to-logs correlations"; exit 1; }
+          echo "datasource links OK"
+
       - name: Set up kubeconform
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
         env:
