@@ -1097,8 +1097,9 @@ loki:
 
 # ── Tempo (single-binary chart, ADR-0004) ────────────────────────────────────
 # One StatefulSet, local trace blocks + WAL on a PVC. The metrics generator
-# pushes RED metrics (span-metrics, service-graphs) to Prometheus remote-write
-# and keeps local-blocks for TraceQL metrics queries (Traces Drilldown).
+# pushes RED metrics (span-metrics, service-graphs) to Prometheus remote-write;
+# TraceQL metrics queries (Traces Drilldown) are served by the live-store and
+# the stored blocks, with no generator processor needed (Tempo 3).
 # Upstream values: https://github.com/grafana-community/helm-charts/tree/main/charts/tempo
 
 tempo:
@@ -1109,13 +1110,9 @@ tempo:
   fullnameOverride: tempo
 
   tempo:
-    # Memory ballast is a legacy Go GC technique replaced by GOMEMLIMIT; the
-    # chart default (1024MB) just wastes memory and contributes to OOMKills.
-    memBallastSizeMbs: 0
-
     # Starting baseline. Tempo memory scales with trace volume — the
-    # metrics-generator, compactor and ingester together can need far more under
-    # load (production has needed 2Gi+); raise as you grow.
+    # live-store, backend worker and metrics-generator together can need far
+    # more under load (production has needed 2Gi+); raise as you grow.
     resources:
       requests:
         cpu: 50m
@@ -1130,9 +1127,6 @@ tempo:
     metricsGenerator:
       enabled: true
       processor:
-        # TraceQL metrics queries (rate/count/histogram) used by Traces Drilldown.
-        local_blocks:
-          flush_to_storage: true
         service_graphs:
           wait: 10s
           max_items: 10000
@@ -1187,7 +1181,6 @@ tempo:
           processors:
             - service-graphs
             - span-metrics
-            - local-blocks
           # Emit RED metrics as BOTH classic and native histograms. Native
           # gives higher resolution at lower cardinality; classic
           # _bucket/_sum/_count are still required by Grafana's built-in Service
@@ -1204,7 +1197,7 @@ tempo:
         wal:
           path: /var/tempo/wal
 
-  # Trace blocks + WAL + metrics-generator local-blocks.
+  # Trace blocks + live-store WAL + metrics-generator WAL.
   persistence:
     enabled: true
     size: 15Gi

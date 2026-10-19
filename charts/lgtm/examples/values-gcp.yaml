@@ -56,7 +56,7 @@ tempo:
     name: tempo
     annotations:
       iam.gke.io/gcp-service-account: <tempo-gsa>@<project-id>.iam.gserviceaccount.com
-  # WAL + metrics-generator local-blocks only — trace blocks live in GCS
+  # Live-store WAL + metrics-generator WAL only — trace blocks live in GCS
   persistence:
     enabled: true
     size: 15Gi

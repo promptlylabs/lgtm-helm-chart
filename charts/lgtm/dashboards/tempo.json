@@ -312,7 +312,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tempo_ingester_blocks_flushed_total[$__rate_interval]))",
+          "expr": "sum(rate(tempo_live_store_local_blocks_flushed_total[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -471,7 +471,7 @@
       "type": "timeseries",
       "id": 9,
       "title": "Distributor Push",
-      "description": "Span push rate into the ingester.",
+      "description": "Span push rate into the distributor.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1348,7 +1348,7 @@
       "type": "timeseries",
       "id": 19,
       "title": "Metrics-generator",
-      "description": "Span-metrics generator backlog & flush failures (RED-metrics path to Prometheus, ADR-0005).",
+      "description": "Spans entering the metrics-generator & its failed remote-write samples (RED-metrics path to Prometheus, ADR-0005).",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1387,7 +1387,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "failed flushes/s"
+              "options": "failed samples/s"
             },
             "properties": [
               {
@@ -1419,8 +1419,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(tempo_metrics_generator_processor_local_blocks_complete_queue_length)",
-          "legendFormat": "queue length",
+          "expr": "sum(rate(tempo_metrics_generator_spans_received_total[$__rate_interval]))",
+          "legendFormat": "spans received/s",
           "refId": "A",
           "editorMode": "code",
           "range": true,
@@ -1432,8 +1432,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tempo_metrics_generator_processor_local_blocks_failed_flushes_total[$__rate_interval]))",
-          "legendFormat": "failed flushes/s",
+          "expr": "sum(rate(prometheus_remote_storage_samples_failed_total{job=~\".*tempo.*\"}[$__rate_interval]))",
+          "legendFormat": "failed samples/s",
           "refId": "B",
           "editorMode": "code",
           "range": true,

@@ -88,7 +88,7 @@ tempo:
     name: tempo
     annotations:
       azure.workload.identity/client-id: <tempo-identity-client-id>
-  # WAL + metrics-generator local-blocks only — trace blocks live in Azure Blob
+  # Live-store WAL + metrics-generator WAL only — trace blocks live in Azure Blob
   persistence:
     enabled: true
     size: 15Gi
