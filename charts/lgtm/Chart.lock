@@ -10,12 +10,12 @@ dependencies:
   version: 18.15.1
 - name: tempo
   repository: https://grafana-community.github.io/helm-charts
-  version: 2.4.0
+  version: 3.1.0
 - name: pyroscope
   repository: https://grafana.github.io/helm-charts
   version: 2.4.0
 - name: opentelemetry-operator
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.124.1
-digest: sha256:ff789640987c493a3e3ad95e70600a3dd7baa924a3b10bcb1ea92e668ac74a50
-generated: "2026-10-19T00:40:09.329536707Z"
+digest: sha256:05dc8f08c22b42c2d687c4fbc34f83c7ae24ac5a63128f55e6b64b98fbf1172b
+generated: "2026-10-19T05:57:44.091123059Z"

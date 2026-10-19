@@ -59,7 +59,7 @@ tempo:
     name: tempo
     annotations:
       eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<tempo-role>
-  # WAL + metrics-generator local-blocks only — trace blocks live in S3
+  # Live-store WAL + metrics-generator WAL only — trace blocks live in S3
   persistence:
     enabled: true
     size: 15Gi

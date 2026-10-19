@@ -9,8 +9,9 @@ prefix (no underscore after tempo) on the compaction metric.
 
 The metrics-generator alert matters more than it looks: it is what produces
 span metrics and service graphs, and it remote-writes them to Prometheus. When
-its local blocks stop flushing, those panels go quiet without Tempo itself
-looking unhealthy.
+that remote write fails, those panels go quiet without Tempo itself looking
+unhealthy. The live-store alert is the trace path's equivalent: Tempo 3's
+live-store accepts spans fine while the blocks it cuts never reach storage.
 */ -}}
 apiVersion: 1
 groups:
@@ -53,22 +54,40 @@ groups:
         data:
           {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(tempodb_compaction_errors_total[15m]))`) | nindent 10 }}
 
-      - uid: lgtm-tempo-metricsgen-flush-failures
-        title: Tempo metrics-generator failing to flush
+      - uid: lgtm-tempo-livestore-flush-failures
+        title: Tempo live-store failing to flush blocks
         condition: C
         for: 15m
         noDataState: OK
         execErrState: Error
         isPaused: false
         annotations:
-          summary: Tempo's metrics-generator cannot flush its local blocks
+          summary: Tempo's live-store cannot write completed blocks to storage
+          description: >-
+            Recent traces stay queryable from the live-store while their blocks fail to reach the
+            storage backend, so they are lost on restart and drop out of search once the
+            live-store lets them go. Usually a full volume or a storage backend problem.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "tempo")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(tempo_live_store_local_failed_flushes_total[15m]))`) | nindent 10 }}
+
+      - uid: lgtm-tempo-metricsgen-write-failures
+        title: Tempo metrics-generator failing to remote-write
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Tempo's metrics-generator cannot push span metrics to Prometheus
           description: >-
             Span metrics and service graphs stop updating, so the RED panels and the service map
             go stale — while Tempo's own trace ingest keeps looking healthy.
         labels:
           {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "tempo")) | nindent 10 }}
         data:
-          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(tempo_metrics_generator_processor_local_blocks_failed_flushes_total[15m]))`) | nindent 10 }}
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `sum(rate(prometheus_remote_storage_samples_failed_total{job=~".*tempo.*"}[15m]))`) | nindent 10 }}
 
       - uid: lgtm-tempo-absent
         title: Tempo not reporting
