@@ -39,7 +39,7 @@ jobs:
         run: make validate-alerts
 
       - name: Set up chart-testing
-        uses: helm/chart-testing-action@v2.8.0
+        uses: helm/chart-testing-action@v2.9.0
 
       # ct does not pick up ./ct.yaml on its own — pass it explicitly
       # (validate-maintainers off: the maintainer is an org, not a user).
