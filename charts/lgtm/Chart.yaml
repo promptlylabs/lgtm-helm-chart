@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.31.0
+version: 0.31.1
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -73,46 +73,7 @@ annotations:
     fingerprint: "B0E0D6CBC8F4077B7A29568708FCD164BF5D41C8"
     url: https://promptlylabs.github.io/lgtm-helm-chart/pgp_keys.asc
   # artifacthub.io/changes is reserved for releases that need action from the
-  # people upgrading (a subchart major with migration steps). Everything else
+  # people upgrading (a subchart major with migration steps); everything else
   # relies on the auto-generated GitHub release notes, since most releases are
-  # automated (Renovate, ADR-0008). ArtifactHub shows this list for whichever
-  # version carries it, so the next release must drop or replace it.
-  artifacthub.io/changes: |
-    - kind: changed
-      description: >-
-        Tempo 2.10 -> 3.1 (tempo chart 3.x). The ingester and compactor are gone:
-        the live-store holds recent traces and the backend scheduler/worker run
-        compaction and retention. tempo.tempo.retention carries over unchanged.
-      links:
-        - name: Tempo 3.0 release notes
-          url: https://grafana.com/docs/tempo/latest/release-notes/v3-0/
-        - name: Tempo chart upgrade notes
-          url: https://github.com/grafana-community/helm-charts/tree/main/charts/tempo#from-chart-versions--300
-    - kind: changed
-      description: >-
-        Upgrading in place loses traces the 2.x ingester has not flushed yet (up
-        to the last 30-45 minutes). Upgrade at a quiet time, or POST /flush to
-        Tempo on port 3200 first. Tempo 3 does not read /var/tempo/wal; its
-        leftover contents can be deleted after the upgrade. Flushed traces stay
-        queryable.
-      links:
-        - name: Migrate to Tempo 3
-          url: https://grafana.com/docs/tempo/latest/set-up-for-tracing/setup-tempo/migrate-to-3/
-    - kind: removed
-      description: >-
-        The local-blocks metrics-generator processor and memBallastSizeMbs are
-        gone from the defaults; TraceQL metrics (Traces Drilldown) are now served
-        without a processor. If your own values set
-        tempo.tempo.metricsGenerator.processor.local_blocks, local-blocks in
-        metrics_generator.processors, tempo.tempo.ingester (now
-        tempo.tempo.liveStore) or legacy flat overrides, migrate them first:
-        Tempo 3 refuses to start on unknown config keys.
-    - kind: changed
-      description: >-
-        TraceQL: != on array attributes now means NOT IN and !~ means MATCH NONE.
-        Review saved queries and dashboards that rely on the old behaviour.
-    - kind: changed
-      description: >-
-        Tempo dashboard and alert pack moved to Tempo 3 metrics. The
-        metrics-generator flush alert is replaced by a remote-write failure
-        alert, and a new alert fires when the live-store fails to flush blocks.
+  # automated (Renovate, ADR-0008). ArtifactHub shows the list for whichever
+  # version carries it, so the release after such a one drops it again.
