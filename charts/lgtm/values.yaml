@@ -786,6 +786,13 @@ thanos:
   extraVolumeMounts: []
   extraEnv: []
 
+  # Pod securityContext for all three components. The image runs as uid 1001, and
+  # without an fsGroup it cannot write to a freshly provisioned (root-owned) PVC,
+  # so Store Gateway and Compactor persistence crash on `mkdir: permission denied`.
+  podSecurityContext:
+    fsGroup: 1001
+    fsGroupChangePolicy: OnRootMismatch
+
   # Thanos Query — Prometheus-API-compatible endpoint that fans out to the
   # sidecar + Store Gateway and deduplicates. Grafana's Prometheus datasource is
   # repointed here automatically when the stack is enabled.
@@ -828,6 +835,13 @@ thanos:
       raw: 30d
       fiveMin: 90d
       oneHour: 1y
+    # The chart's Prometheus keeps a 30m out-of-order window
+    # (20-kube-prometheus-stack.yaml), so late samples upload a second block for a
+    # 2h range that already has one. Without vertical compaction the Compactor
+    # halts on the first such overlap and stops compacting, downsampling and
+    # applying retention for good.
+    verticalCompaction: true
+    extraArgs: []
     # Scratch space for compaction/downsampling.
     persistence:
       enabled: true

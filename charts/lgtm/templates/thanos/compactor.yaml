@@ -50,6 +50,10 @@ spec:
         app.kubernetes.io/component: compactor
         {{- include "lgtm.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.thanos.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: thanos-compactor
           image: {{ include "lgtm.thanos.image" . }}
@@ -64,6 +68,12 @@ spec:
             - --retention.resolution-raw={{ .Values.thanos.compactor.retention.raw }}
             - --retention.resolution-5m={{ .Values.thanos.compactor.retention.fiveMin }}
             - --retention.resolution-1h={{ .Values.thanos.compactor.retention.oneHour }}
+            {{- if .Values.thanos.compactor.verticalCompaction }}
+            - --compact.enable-vertical-compaction
+            {{- end }}
+            {{- with .Values.thanos.compactor.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 10902

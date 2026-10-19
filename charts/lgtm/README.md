@@ -139,6 +139,9 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `thanos.enabled` | `false` | Umbrella-owned Thanos query stack (Query/Store Gateway/Compactor) — see [Long-term metrics (Thanos)](#long-term-metrics-thanos) |
 | `thanos.objstore.existingSecret` | `""` | Existing Secret holding the Thanos `objstore.yml` (shared by Store Gateway + Compactor) |
 | `thanos.objstore.caCert.existingSecret` | `""` | Existing Secret with a private/custom CA bundle for the object-store TLS endpoint — mounted read-only into Store Gateway + Compactor with `SSL_CERT_FILE` pointed at it, so an on-prem S3 verifies without `insecure_skip_verify` |
+| `thanos.podSecurityContext` | `fsGroup: 1001`, `fsGroupChangePolicy: OnRootMismatch` | Pod security context for Query, Store Gateway and Compactor. `fsGroup` is what lets the non-root Thanos user (UID 1001) write to a freshly provisioned PVC |
+| `thanos.compactor.verticalCompaction` | `true` | Run the Compactor with `--compact.enable-vertical-compaction`, so it merges the overlapping blocks that Prometheus' out-of-order window uploads instead of halting on them |
+| `thanos.compactor.extraArgs` | `[]` | Extra `thanos compact` flags, appended after the chart's own |
 
 The Thanos **sidecar** itself is a `kube-prometheus-stack.*` pass-through (not an umbrella key); the [`values-thanos.yaml`](examples/values-thanos.yaml) overlay wires both.
 
@@ -327,7 +330,7 @@ Object-store notes: `endpoint` is the host only (no scheme, no bucket), `bucket_
 
 Private-CA S3 (e.g. an on-prem Huawei OceanStor whose cert is signed by a private CA): set `thanos.objstore.caCert.existingSecret` to a Secret holding the CA bundle — it's mounted read-only into Store Gateway + Compactor and `SSL_CERT_FILE` is pointed at it, so TLS verifies without `http_config.tls_config.insecure_skip_verify`. Cover the sidecar half the same way via `kube-prometheus-stack.prometheus.prometheusSpec.volumes` + `prometheusSpec.thanos.volumeMounts` + an `objstore.yml` `ca_file` (see [`values-thanos.yaml`](examples/values-thanos.yaml)). For anything the built-in knobs don't cover, `thanos.extraVolumes` / `thanos.extraVolumeMounts` / `thanos.extraEnv` are applied to all three components.
 
-Keep local `retention` at least a few hours so blocks upload before eviction — the default 7d is fine, 24h is safe. With sidecar compaction disabled, don't set `retentionSize` so tight that a 2h block is evicted before it uploads (that gaps the bucket): prefer time-based retention. The **Compactor is a singleton** — it compacts, downsamples and enforces the bucket's retention; without it the bucket grows forever.
+Keep local `retention` at least a few hours so blocks upload before eviction — the default 7d is fine, 24h is safe. With sidecar compaction disabled, don't set `retentionSize` so tight that a 2h block is evicted before it uploads (that gaps the bucket): prefer time-based retention. The **Compactor is a singleton** — it compacts, downsamples and enforces the bucket's retention; without it the bucket grows forever. It runs with vertical compaction on by default: the chart's Prometheus accepts samples up to 30m out of order (`outOfOrderTimeWindow`), and every late sample makes it upload a second block for a 2h range that already has one. Without vertical compaction the Compactor halts on the first such overlap (`thanos_compact_halted 1`, "overlaps found while gathering blocks") and stops compacting, downsampling and applying retention. Turn `thanos.compactor.verticalCompaction` off only if you also set `outOfOrderTimeWindow` to `0s`.
 
 ### Renaming and relocating components
 
