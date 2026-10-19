@@ -28,6 +28,10 @@ spec:
         app.kubernetes.io/component: query
         {{- include "lgtm.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.thanos.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: thanos-query
           image: {{ include "lgtm.thanos.image" . }}

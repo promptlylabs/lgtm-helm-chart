@@ -284,6 +284,7 @@
         "extraVolumes": { "type": "array", "items": { "type": "object" } },
         "extraVolumeMounts": { "type": "array", "items": { "type": "object" } },
         "extraEnv": { "type": "array", "items": { "type": "object" } },
+        "podSecurityContext": { "type": "object" },
         "query": {
           "type": "object",
           "additionalProperties": false,
@@ -330,6 +331,8 @@
                 "oneHour": { "type": "string", "minLength": 1 }
               }
             },
+            "verticalCompaction": { "type": "boolean" },
+            "extraArgs": { "type": "array", "items": { "type": "string" } },
             "persistence": {
               "type": "object",
               "additionalProperties": false,

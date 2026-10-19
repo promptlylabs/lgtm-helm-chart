@@ -49,6 +49,10 @@ spec:
         app.kubernetes.io/component: store-gateway
         {{- include "lgtm.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.thanos.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: thanos-store-gateway
           image: {{ include "lgtm.thanos.image" . }}
