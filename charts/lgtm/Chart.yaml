@@ -6,7 +6,7 @@ description: >-
   operator-managed collectors, with correlated datasources and OTel-native
   dashboards included. One install per cluster.
 type: application
-version: 0.32.0
+version: 0.32.1
 # The stack has no single app version; each component carries its own.
 appVersion: "2026.06"
 kubeVersion: ">=1.25.0-0"
@@ -48,17 +48,17 @@ dependencies:
     condition: loki.enabled
   # https://artifacthub.io/packages/helm/grafana-community/tempo — single-binary chart
   - name: tempo
-    version: 3.2.0
+    version: 3.2.1
     repository: https://grafana-community.github.io/helm-charts
     condition: tempo.enabled
   # https://artifacthub.io/packages/helm/grafana/pyroscope — NOT migrated, still grafana.github.io
   - name: pyroscope
-    version: 2.4.0
+    version: 2.4.1
     repository: https://grafana.github.io/helm-charts
     condition: pyroscope.enabled
   # https://artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-operator
   - name: opentelemetry-operator
-    version: 0.126.0
+    version: 0.126.2
     repository: https://open-telemetry.github.io/opentelemetry-helm-charts
     condition: opentelemetry-operator.enabled
 annotations:
