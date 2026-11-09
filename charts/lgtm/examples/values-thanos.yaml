@@ -101,7 +101,7 @@ kube-prometheus-stack:
       # objstore.yml (above), never in values.
       thanos:
         # renovate: datasource=github-releases depName=thanos-io/thanos
-        image: quay.io/thanos/thanos:v0.42.4
+        image: quay.io/thanos/thanos:v0.42.5
         objectStorageConfig:
           existingSecret:
             name: thanos-objstore
