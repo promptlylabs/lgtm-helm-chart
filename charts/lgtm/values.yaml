@@ -473,6 +473,47 @@ collectors:
       networkPolicy:
         enabled: true
         extraIngress: []
+    # HTTP endpoint probes (ADR-0020): the http_check receiver requests each
+    # target every collectionInterval from inside the cluster, and the bundled
+    # lgtm-httpcheck alert rules page when one stops answering. Off by default;
+    # renders only when enabled AND targets is non-empty. The cluster collector
+    # is a single replica, so each URL is checked once, not once per node.
+    #
+    # "Reachable" means the server sent back an HTTP response — ANY status,
+    # 401/403 included: an auth or IP-allowlist rejection still proves DNS, the
+    # load balancer, the proxy listener and its route all answered.
+    # "Unreachable" (critical, 2m) is no response at all: connection refused,
+    # timeout, TLS or DNS failure. A 5xx response raises a separate warning (5m).
+    #
+    # The probe runs from inside the cluster, so it cannot see a failure that
+    # exists only on the outside path (cloud load balancer, public DNS, a WAF or
+    # firewall in front). kube-proxy and Cilium also route in-cluster traffic
+    # for a Service's LoadBalancer IP straight to its endpoints, skipping the
+    # external load balancer — see "HTTP endpoint probes" in the chart README.
+    #
+    # Egress: neither this chart nor the operator restricts the collector's
+    # egress. Under a default-deny egress policy the cluster collector pods
+    # need DNS plus each target — the README has an example NetworkPolicy.
+    httpcheck:
+      enabled: false
+      # How often every target is requested.
+      collectionInterval: 30s
+      # Per-request timeout, applied to every target that does not set its own.
+      # Keep it below collectionInterval (the receiver's own default is 30s).
+      timeout: 10s
+      # Passed through verbatim as http_check targets, so any field the
+      # receiver supports works: endpoint (or endpoints: [...]), method, headers,
+      # tls (insecure_skip_verify, server_name_override, ca_pem, min_version,
+      # ...), timeout, proxy_url, body, validations. Headers end up in plain
+      # text in the OpenTelemetryCollector CR — never put a credential in one —
+      # and the collector expands ${...} in any value as an env reference.
+      targets: []
+      # - endpoint: https://registry.example.com/api/ping
+      #   method: GET
+      # - endpoint: https://grafana.example.com/api/health
+      #   method: HEAD
+      #   tls:
+      #     server_name_override: grafana.example.com
     resources:
       limits:
         memory: 384Mi

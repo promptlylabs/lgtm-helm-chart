@@ -36,6 +36,11 @@ noDataState forever — a guard that looks provisioned and is silently dead, wit
 error anywhere. That is how 0.18.0 shipped the Target Allocator restart alert, the
 one rule the pack exists for, matching zero series. See scripts/otel_label_spelling.py.
 
+The chart is rendered with examples/values-httpcheck.yaml layered on the
+defaults. That overlay only switches the HTTP endpoint probes on, and with them
+the httpcheck pack, which is opt-in and would otherwise never be validated;
+every other pack renders exactly as it does by default.
+
 Runtime coverage (do the queries return anything?) is the smoke test's job.
 
 Usage:
@@ -53,6 +58,9 @@ from otel_label_spelling import describe, find_violations, promoted_aliases
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHART_DIR = REPO_ROOT / "charts" / "lgtm"
+
+# Switches on the opt-in rule packs (today: httpcheck) on top of the defaults.
+OPT_IN_OVERLAY = CHART_DIR / "examples" / "values-httpcheck.yaml"
 
 # Keep in sync with templates/grafana/datasources.yaml, as validate_dashboards.py does.
 KNOWN_DATASOURCES = {"prometheus", "loki", "tempo", "pyroscope"}
@@ -80,6 +88,7 @@ def render() -> str:
         [
             "helm", "template", "lgtm", str(CHART_DIR),
             "--namespace", "observability",
+            "-f", str(OPT_IN_OVERLAY),
             "--show-only", "templates/grafana/alerting.yaml",
         ],
         capture_output=True,

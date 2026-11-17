@@ -14,7 +14,9 @@ Two halves:
   2. Bundled rules — one ConfigMap per alerts/*.yaml. $gate maps a rule file's
      basename to the component it watches, so a rule pack is only provisioned
      when that component is in the release; lgtm.alerting.exclude drops files by
-     basename. Same shape as the dashboards $gate map.
+     basename. Same shape as the dashboards $gate map. The httpcheck pack is
+     gated on the probes themselves (lgtm.httpcheck.enabled), not a component:
+     it renders exactly when the cluster collector runs http_check targets.
 
 Unlike dashboards, the rule files are run through `tpl`: they call the shared
 lgtm.alerting.query helper for the A/B/C data[] triple, which is what keeps each
@@ -79,7 +81,8 @@ data:
   "otel-collector" .Values.collectors.enabled
   "loki"           .Values.loki.enabled
   "prometheus"     (index .Values "kube-prometheus-stack" "enabled")
-  "tempo"          .Values.tempo.enabled }}
+  "tempo"          .Values.tempo.enabled
+  "httpcheck"      (eq (include "lgtm.httpcheck.enabled" .) "true") }}
 {{- range $path, $_ := .Files.Glob "alerts/*.yaml" }}
 {{- $name := base $path | trimSuffix ".yaml" }}
 {{- if and (not (has $name $.Values.lgtm.alerting.exclude)) (or (not (hasKey $gate $name)) (index $gate $name)) }}

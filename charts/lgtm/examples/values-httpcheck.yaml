@@ -1,0 +1,27 @@
+# HTTP endpoint probes from inside the cluster (ADR-0020).
+#
+# The cluster collector requests each target every 30s and the bundled
+# lgtm-httpcheck rules alert when one stops answering:
+#   - HTTP endpoint unreachable (critical, 2m): no HTTP response at all —
+#     connection refused, timeout, TLS or DNS failure. Any status code,
+#     401/403 included, counts as reachable.
+#   - HTTP endpoint returning server errors (warning, 5m): a 5xx response.
+#
+# List the URLs real callers use, so the probe takes their path: DNS →
+# load-balancer VIP → gateway proxy → route → backend. Under a default-deny
+# egress policy the cluster collector also needs an egress rule — see
+# "HTTP endpoint probes" in the chart README.
+collectors:
+  cluster:
+    httpcheck:
+      enabled: true
+      targets:
+        - endpoint: https://registry.example.com/api/ping
+          method: GET
+        # A HEAD request, with an explicit TLS server name and a tighter timeout
+        # than the chart default (10s).
+        - endpoint: https://grafana.example.com/api/health
+          method: HEAD
+          timeout: 5s
+          tls:
+            server_name_override: grafana.example.com
