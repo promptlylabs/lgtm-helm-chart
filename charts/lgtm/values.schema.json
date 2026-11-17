@@ -212,6 +212,33 @@
                 }
               }
             },
+            "httpcheck": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "collectionInterval": { "type": "string" },
+                "timeout": { "type": "string" },
+                "targets": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "anyOf": [
+                      { "required": ["endpoint"] },
+                      { "required": ["endpoints"] }
+                    ],
+                    "properties": {
+                      "endpoint": { "type": "string" },
+                      "endpoints": { "type": "array", "items": { "type": "string" } },
+                      "method": { "type": "string" },
+                      "headers": { "type": "object" },
+                      "tls": { "type": "object" },
+                      "timeout": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            },
             "resources": { "type": "object" }
           }
         },

@@ -105,7 +105,7 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `lgtm.alerting.interval` | `1m` | Evaluation interval for the shipped rule groups |
 | `lgtm.alerting.datasourceUid` | `prometheus` | Datasource the shipped rules query |
 | `lgtm.alerting.commonLabels` | `{}` | Labels merged onto every shipped rule, for routing (e.g. `{team: platform}`) |
-| `lgtm.alerting.exclude` | `[]` | Skip rule packs by basename (`[otel-collector, loki, prometheus, tempo]`) |
+| `lgtm.alerting.exclude` | `[]` | Skip rule packs by basename (`[otel-collector, loki, prometheus, tempo, httpcheck]`) |
 | `lgtm.alerting.contactPoints` | `[]` | Contact points, in Grafana provisioning format — see [Alerting](#alerting) |
 | `lgtm.alerting.policies` | `[]` | Notification policies. Only provisioned when `contactPoints` is also set |
 | `lgtm.alerting.templates` | `[]` | Notification templates, in Grafana provisioning format |
@@ -135,6 +135,10 @@ Sub-chart values pass through under their top-level key (`loki.*`, `grafana.*`, 
 | `collectors.node.kubeletInsecureSkipVerify` | `true` | Skip TLS verification when the node collector scrapes the kubelet on `:10250`. Set `false` only where kubelet serving certs are signed by the cluster CA — see [Kubelet TLS verification](#kubelet-tls-verification) |
 | `collectors.node.internalMetricsPort` | `8888` | Host port for the node collector's own internal-telemetry metrics endpoint (the DaemonSet is hostNetwork). Move it if `:8888` is taken on the host |
 | `collectors.cluster.*` | enabled | Cluster collector: resources |
+| `collectors.cluster.httpcheck.enabled` | `false` | Probe HTTP endpoints from inside the cluster and alert when one stops answering. Renders only with at least one target — see [HTTP endpoint probes](#http-endpoint-probes) |
+| `collectors.cluster.httpcheck.collectionInterval` | `30s` | How often every target is requested |
+| `collectors.cluster.httpcheck.timeout` | `10s` | Per-request timeout for every target that sets none. Keep it below `collectionInterval` |
+| `collectors.cluster.httpcheck.targets` | `[]` | `http_check` receiver targets, passed through verbatim: `endpoint` (or `endpoints`), `method`, `headers`, `tls`, `timeout`, … |
 | `collectors.faro.*` | disabled | Browser telemetry: requires `image` (contrib distro) + `corsAllowedOrigins` |
 | `thanos.enabled` | `false` | Umbrella-owned Thanos query stack (Query/Store Gateway/Compactor) — see [Long-term metrics (Thanos)](#long-term-metrics-thanos) |
 | `thanos.objstore.existingSecret` | `""` | Existing Secret holding the Thanos `objstore.yml` (shared by Store Gateway + Compactor) |
@@ -204,7 +208,7 @@ The chart does not generate these certificates itself: Helm's `genCA` would issu
 
 Alerting is **Grafana-managed** (ADR-0015): Alertmanager is disabled, and rules, contact points and notification policies are provisioned from ConfigMaps labelled `grafana_alert: "1"`, from any namespace. The chart ships a baseline rule pack for its own components, and no contact points — where alerts *go* is site-specific.
 
-**The shipped rules** live in `alerts/`, one pack per component, each gated on that component being enabled exactly like the dashboards: `otel-collector`, `loki`, `prometheus`, `tempo`. They watch ingest and query error rates, queue and WAL saturation, compaction health, and — the one that prompted the pack — **Target Allocator restarts**. Each allocator is a separate Deployment whose health is not reflected in the parent `OpenTelemetryCollector` CR status, so an ArgoCD Application reports `Healthy` right through an allocator crashloop; we have seen that hide one for 8 days and ~1800 restarts while every ServiceMonitor in the cluster flapped in and out of the scrape set (see [Target allocator](#target-allocator) and [Operations](#operations)).
+**The shipped rules** live in `alerts/`, one pack per component, each gated on that component being enabled exactly like the dashboards: `otel-collector`, `loki`, `prometheus`, `tempo`. They watch ingest and query error rates, queue and WAL saturation, compaction health, and — the one that prompted the pack — **Target Allocator restarts**. Each allocator is a separate Deployment whose health is not reflected in the parent `OpenTelemetryCollector` CR status, so an ArgoCD Application reports `Healthy` right through an allocator crashloop; we have seen that hide one for 8 days and ~1800 restarts while every ServiceMonitor in the cluster flapped in and out of the scrape set (see [Target allocator](#target-allocator) and [Operations](#operations)). A fifth, `httpcheck`, is opt-in and covers the URLs you list rather than the stack itself — see [HTTP endpoint probes](#http-endpoint-probes).
 
 Two rules in the Loki pack are shaped differently on purpose. `lgtm-loki-otlp-ingest-rejected-burst` and `lgtm-loki-discarded-samples-burst` count occurrences over a 30-minute window at threshold 0 (`for: 0`) rather than taking an error ratio, because a `400` is *permanent* loss for the entries it rejects, whether or not it is a large fraction of traffic — the incident behind ADR-0017 measured 0.46% of pushes. Loki stores the rest of a `400`'d push, so `loki_discarded_samples_total` is the exact count, and its `reason` label (`structured_metadata_too_large`, `line_too_long`, `too_far_behind`, …) is what tells you which limit you hit. The collector's `send_failed` counts the whole batch. Both rules leave out `429` and its reasons (`rate_limited`, `per_stream_rate_limit`, `stream_limit`). Loki writes nothing from a rate-limited push and the exporter retries it, so a `429` is only loss once the retries run out, and that surfaces once in `lgtm-otelcol-export-drop-burst`.
 
@@ -249,6 +253,74 @@ Grafana-managed alerting means each Grafana replica runs its own Alertmanager. T
 **The gossip ring is necessary but not sufficient.** Grafana's HA alerting also requires every replica to share **one database**, and this chart defaults to ephemeral per-pod SQLite — each replica would otherwise keep its own alert state, silences and dashboards. So `grafana.replicas > 1` needs an external MySQL/PostgreSQL as well; [`values-azure.yaml`](examples/values-azure.yaml) shows the PostgreSQL pattern.
 
 The chart refuses to render rather than ship a stack that double-notifies: raising `grafana.replicas` above 1 fails with a message unless both halves are in place. It accepts a database configured in `grafana.ini`, via `GF_DATABASE_TYPE`/`GF_DATABASE_URL` in `grafana.env`, or through any `envFrom*` source it cannot introspect.
+
+### HTTP endpoint probes
+
+`up` only proves each pod's `/metrics` answers when scraped directly by pod IP. It says nothing about the path a real caller takes — DNS → load-balancer VIP → gateway proxy → route → backend. A gateway whose proxy came up with no listeners refuses every connection while all its pods stay `Running`, and no stack-level rule notices. HTTP endpoint probes close that gap (ADR-0020). Each URL you list is requested every 30s by the cluster collector, using the [`http_check` receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/httpcheckreceiver) that ships in the `otelcol-k8s` distribution. The cluster collector is a single replica, so each URL is checked once, not once per node. The feature is off by default:
+
+```yaml
+collectors:
+  cluster:
+    httpcheck:
+      enabled: true
+      targets:
+        - endpoint: https://registry.example.com/api/ping
+          method: GET
+        - endpoint: https://grafana.example.com/api/health
+          method: HEAD
+          tls:
+            server_name_override: grafana.example.com
+```
+
+Targets pass through verbatim, so any field the receiver supports works: `headers`, `tls` (`insecure_skip_verify`, `server_name_override`, `ca_pem`, `min_version`, …), `timeout`, `proxy_url`, `body`, `validations`. The chart fills in `timeout` (default `10s`) where a target sets none. Headers sit in plain text in the `OpenTelemetryCollector` CR, so keep credentials out of them. You rarely need any: see what counts as reachable below. [`values-httpcheck.yaml`](examples/values-httpcheck.yaml) is a starting point.
+
+**Alerts.** Enabling the probes also provisions the `httpcheck` rule pack (drop it with `lgtm.alerting.exclude: [httpcheck]`):
+
+| Rule | Severity | Fires when |
+|---|---|---|
+| `HTTP endpoint unreachable` | critical | The latest check got **no HTTP response at all** — connection refused, timeout, TLS or DNS failure — at every evaluation for 2 minutes. The annotation names the URL and the error |
+| `HTTP endpoint returning server errors` | warning | The latest check got a **5xx** at every evaluation for 5 minutes. The annotation names the URL and the status code |
+
+**What "reachable" means.** Any HTTP response counts, whatever its status — **401 and 403 included**. An auth challenge or an IP-allowlist rejection still proves that DNS resolved, the VIP accepted the connection, and the proxy's listener and route answered. That is the failure the probe exists to catch. Only a 5xx raises the separate warning. Probe a URL that answers without credentials when you can, and you never need a secret in `headers`.
+
+**It probes from inside the cluster.** The request leaves the cluster collector's pod and resolves through cluster DNS, so it follows the path an in-cluster caller takes, not necessarily the one an outside user takes:
+
+- A failure that exists only on the outside path is invisible to it: the cloud load balancer, public DNS records, a WAF, a CDN, or a firewall in front of the cluster.
+- kube-proxy and Cilium route in-cluster traffic aimed at a `LoadBalancer` Service's external IP straight to the Service's endpoints, skipping the external load balancer. The exception is a Service with `status.loadBalancer.ingress[].ipMode: Proxy`.
+- What it does exercise is DNS, the gateway proxy's listener, its routes, and the backend behind them. Pair it with an external uptime check if the outside path matters too.
+
+**Egress.** Neither this chart nor the operator restricts the collector's egress. The chart's own NetworkPolicy fences only the cluster target allocator, and is ingress-only. The operator's collector policy is ingress-only too. So on a cluster with no default-deny egress policy the probes just work. Under default-deny egress, the cluster collector pods need DNS plus every target. NetworkPolicy is evaluated **after** the Service DNAT, so a target served by an in-cluster gateway must be allowed by its **backend pods'** labels, not by an `ipBlock` of the VIP. External targets need an `ipBlock` (or, on Cilium, a `toFQDNs` rule). For example:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-cluster-collector-httpcheck-egress
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: opentelemetry-collector
+      app.kubernetes.io/instance: observability.otel-cluster-collector   # <namespace>.otel-cluster-collector
+  policyTypes: [Egress]
+  egress:
+    - to:   # cluster DNS
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:   # in-cluster gateway: allow the proxy pods behind the VIP
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gateway-system
+      ports:
+        - { protocol: TCP, port: 443 }
+```
+
+This only adds to what the collector already needs: Prometheus, Loki, the apiserver, its target allocator, and its scrape targets. Under default-deny those need their own rules already.
 
 ### Storage
 

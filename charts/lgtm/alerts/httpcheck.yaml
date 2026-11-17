@@ -1,0 +1,80 @@
+{{- /*
+HTTP endpoint probe alerts (ADR-0020). Rendered through `tpl`, and only when the
+cluster collector runs the http_check receiver with at least one target (gate:
+lgtm.httpcheck.enabled in templates/grafana/alerting.yaml). PromQL follows the
+positive-means-bad convention.
+
+What the receiver writes on every check, all at one shared timestamp:
+  httpcheck.duration  always, success or failure — the "a check ran" series
+  httpcheck.error     1, only when no HTTP response came back at all (dial,
+                      DNS, TLS, timeout), labelled with error.message
+  httpcheck.status    one point per class 1xx..5xx: 1 with http.status_code on
+                      the class that matched, 0 without it on the others; all
+                      0 when there was no response
+
+Both rules ask "did the LATEST check fail?" by comparing sample timestamps, not
+values: the newest error (or 5xx) sample is at least as new as the newest
+check. OTLP-ingested series carry no staleness markers, so a value-based rule
+would keep reading the last error=1 (or 5xx=1) sample for the whole 5m lookback
+after the endpoint recovered. timestamp() must wrap a bare selector: on a
+computed vector it returns the evaluation time instead.
+
+Only an error counts as unreachable. Any HTTP status, 401/403 included, proves
+DNS, the load balancer, the proxy listener and its route all answered.
+
+Prometheus uses NoTranslation, so dotted metric and label names stay quoted and
+Grafana annotations use index for them. error.message and http.status_code are
+kept as labels so the annotations can name them; a change of error text starts
+a new alert instance (ADR-0020).
+*/ -}}
+{{- $interval := .Values.collectors.cluster.httpcheck.collectionInterval -}}
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: lgtm-httpcheck
+    folder: {{ .Values.lgtm.alerting.folder | quote }}
+    interval: {{ .Values.lgtm.alerting.interval | quote }}
+    rules:
+      - uid: lgtm-httpcheck-unreachable
+        title: HTTP endpoint unreachable
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Endpoint {{ `{{ index $labels "http.url" }}` }} is not answering
+          description: >-
+            {{ `{{ index $labels "http.url" }}` }} has returned no HTTP response for at least 2
+            minutes. Latest error: {{ `{{ index $labels "error.message" }}` }}.
+            Any HTTP status, 401 and 403 included, would have counted as reachable, so this is a
+            connection, TLS, DNS or timeout failure: nothing is listening, or nothing on the path
+            routes the request. The cluster collector requests the URL every {{ $interval }} from
+            inside the cluster, so this is the path in-cluster callers take; a failure only on the
+            outside path (cloud load balancer, public DNS, a firewall in front) is not visible from
+            here. If the cluster collector itself is down this rule goes silent instead — see
+            lgtm-otelcol-cluster-absent.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "critical" "component" "httpcheck")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `max by ("http.url", "error.message") (timestamp({"httpcheck.error"})) >= on ("http.url") group_left max by ("http.url") (timestamp({"httpcheck.duration"}))`) | nindent 10 }}
+
+      - uid: lgtm-httpcheck-server-errors
+        title: HTTP endpoint returning server errors
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: Endpoint {{ `{{ index $labels "http.url" }}` }} is answering HTTP {{ `{{ index $labels "http.status_code" }}` }}
+          description: >-
+            {{ `{{ index $labels "http.url" }}` }} has been answering HTTP
+            {{ `{{ index $labels "http.status_code" }}` }} for at least 5 minutes. The endpoint is reachable — the
+            proxy in front of it answered — but the request is failing server-side: a backend down
+            or erroring, or a gateway with no healthy upstream (502/503/504). Checked from inside
+            the cluster every {{ $interval }} by the cluster collector.
+        labels:
+          {{- include "lgtm.alerting.labels" (dict "root" . "labels" (dict "severity" "warning" "component" "httpcheck")) | nindent 10 }}
+        data:
+          {{- include "lgtm.alerting.query" (dict "root" . "expr" `max by ("http.url", "http.status_code") (timestamp({"httpcheck.status", "http.status_class"="5xx", "http.status_code"!=""})) >= on ("http.url") group_left max by ("http.url") (timestamp({"httpcheck.duration"}))`) | nindent 10 }}

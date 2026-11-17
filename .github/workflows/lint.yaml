@@ -259,6 +259,33 @@ jobs:
           echo "$both" | grep -q 'lgtm-alerting-contactpoints' || { echo "contactPoints should render"; exit 1; }
           echo "alert rule gating OK"
 
+      # HTTP endpoint probes (ADR-0020) are opt-in: the http_check receiver and
+      # its rule pack render together, only when enabled with at least one
+      # target, and never without the cluster collector.
+      - name: Helm template (HTTP endpoint probes — assert gating)
+        run: |
+          render() { helm template lgtm charts/lgtm/ --namespace observability "$@"; }
+          probes() { grep -cE 'http_check|lgtm-alert-httpcheck' || true; }
+          [ "$(render | probes)" = 0 ] || { echo "httpcheck must render nothing by default"; exit 1; }
+          [ "$(render --set collectors.cluster.httpcheck.enabled=true | probes)" = 0 ] \
+            || { echo "httpcheck enabled with no targets must render nothing"; exit 1; }
+          [ "$(render -f charts/lgtm/examples/values-httpcheck.yaml --set collectors.cluster.enabled=false | probes)" = 0 ] \
+            || { echo "httpcheck must follow the cluster collector"; exit 1; }
+          col=$(render -f charts/lgtm/examples/values-httpcheck.yaml --show-only templates/collectors/cluster-collector.yaml)
+          grep -q 'receivers: \[k8s_cluster, prometheus, http_check\]' <<< "$col" || { echo "http_check missing from the metrics pipeline"; exit 1; }
+          # The chart default fills in timeout; a target's own timeout wins.
+          grep -q 'timeout: 10s' <<< "$col" || { echo "default per-target timeout missing"; exit 1; }
+          grep -q 'timeout: 5s'  <<< "$col" || { echo "per-target timeout override lost"; exit 1; }
+          al=$(render -f charts/lgtm/examples/values-httpcheck.yaml --show-only templates/grafana/alerting.yaml)
+          grep -q 'name: lgtm-alert-httpcheck' <<< "$al" || { echo "httpcheck rule pack missing"; exit 1; }
+          ex=$(render -f charts/lgtm/examples/values-httpcheck.yaml --set 'lgtm.alerting.exclude={httpcheck}' --show-only templates/grafana/alerting.yaml)
+          grep -q 'name: lgtm-alert-httpcheck' <<< "$ex" && { echo "exclude should drop the httpcheck pack"; exit 1; }
+          # A target with neither endpoint nor endpoints must fail the schema.
+          if render --set collectors.cluster.httpcheck.enabled=true --set-json 'collectors.cluster.httpcheck.targets=[{"method":"GET"}]' > /dev/null 2>&1; then
+            echo "a target without endpoint/endpoints must be rejected by the schema"; exit 1
+          fi
+          echo "HTTP endpoint probe gating OK"
+
       # Every datasource link (correlations, exemplars, derived fields,
       # traces-to-*) must target a datasource that is actually provisioned. A
       # correlation to a missing uid fails Grafana's provisioning and Grafana

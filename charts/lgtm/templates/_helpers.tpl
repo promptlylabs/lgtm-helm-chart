@@ -346,6 +346,21 @@ Included from templates/validations.yaml, which renders on every pass.
 {{- end -}}
 
 {{/*
+HTTP endpoint probes (ADR-0020): "true" when the cluster collector renders the
+http_check receiver, empty otherwise. Needs the collectors, the cluster
+collector and collectors.cluster.httpcheck all enabled AND at least one target
+— the receiver refuses to start with none. The collector template and the
+alerting.yaml gate both call this, so the receiver and its rule pack can never
+render one without the other.
+*/}}
+{{- define "lgtm.httpcheck.enabled" -}}
+{{- $c := .Values.collectors -}}
+{{- if and $c.enabled $c.cluster.enabled $c.cluster.httpcheck.enabled $c.cluster.httpcheck.targets -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
 Grafana-managed alert rule query — the A/B/C data[] triple (ADR-0015).
 
 Every bundled rule in alerts/ is the same shape: run one instant PromQL query,

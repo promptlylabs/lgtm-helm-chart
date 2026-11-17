@@ -20,6 +20,7 @@ related:
     - ./0005-otlp-push-scrapeless-prometheus.md
     - ./0012-first-party-component-dashboards.md
     - ./0014-targetallocator-secret-rbac-and-sizing.md
+    - ./0020-http-endpoint-probes.md
 ---
 
 # ADR-0015 — Grafana-managed alerting: HA wiring and a baseline rule pack

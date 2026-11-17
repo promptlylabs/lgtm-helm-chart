@@ -144,6 +144,22 @@ spec:
       # Kubernetes events as structured logs (Normal→INFO, Warning→WARN)
       k8s_events:
         auth_type: serviceAccount
+      {{- if include "lgtm.httpcheck.enabled" . }}
+      {{- $httpcheck := .Values.collectors.cluster.httpcheck }}
+      {{- $targets := list }}
+      {{- range $httpcheck.targets }}
+      {{- $targets = append $targets (merge (dict) . (dict "timeout" $httpcheck.timeout)) }}
+      {{- end }}
+
+      # HTTP endpoint probes (ADR-0020). Single replica, so each target is
+      # requested once per interval cluster-wide. Targets pass through verbatim;
+      # the chart only fills in timeout where a target leaves it unset. Feeds
+      # the bundled lgtm-httpcheck rule pack (alerts/httpcheck.yaml).
+      http_check:
+        collection_interval: {{ $httpcheck.collectionInterval }}
+        targets:
+          {{- toYaml $targets | nindent 10 }}
+      {{- end }}
 
     processors:
       # Must be first in every pipeline (fail-safe); ~80% of the 512Mi limit
@@ -253,7 +269,7 @@ spec:
       {{- end }}
       pipelines:
         metrics:
-          receivers: [k8s_cluster, prometheus]
+          receivers: [k8s_cluster, prometheus{{ if include "lgtm.httpcheck.enabled" . }}, http_check{{ end }}]
           processors: [memory_limiter, resource]
           exporters: [otlp_http/metrics, debug]
         logs:
