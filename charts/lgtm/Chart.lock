@@ -7,7 +7,7 @@ dependencies:
   version: 14.4.0
 - name: loki
   repository: https://grafana-community.github.io/helm-charts
-  version: 20.4.1
+  version: 21.1.1
 - name: tempo
   repository: https://grafana-community.github.io/helm-charts
   version: 3.2.1
@@ -17,5 +17,5 @@ dependencies:
 - name: opentelemetry-operator
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.129.0
-digest: sha256:c394aa7d9d59b0852f9b7ba48102cfcacc5d7521c7036e0ebd76deb177a2f9dd
-generated: "2026-11-16T00:31:27.368635533Z"
+digest: sha256:8962382f3c327f28f6c0c10c0550cbbf8c4372f51e3b2cf7437a74bb6e95bac4
+generated: "2026-11-17T11:41:07.929538991Z"
