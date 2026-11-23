@@ -409,9 +409,14 @@ jobs:
           # the one that was dead. Assert it matches at least one series.
           # Deliberately not generalised to "every rule returns data": rules like
           # the 5xx-ratio ones correctly return nothing when nothing is wrong.
+          #
+          # Polled like the checks above: the persistentQueue upgrade recreates
+          # both Target Allocator pods, so their k8s.container.restarts series
+          # are brand new, and delta() needs two k8s_cluster samples (30s apart)
+          # before the guard returns anything. Only the last attempt reports.
           curl -fsS -u "admin:$GP" localhost:13000/api/v1/provisioning/alert-rules > /tmp/rules.json
-          python3 - <<'PY' || fail "bundled alert rules do not match live data — see errors above"
-          import json, urllib.parse, urllib.request
+          cat > /tmp/check_rules.py <<'PY'
+          import json, os, urllib.parse, urllib.request
 
           rules = json.load(open("/tmp/rules.json"))
           bad = []
@@ -438,10 +443,17 @@ jobs:
                       bad.append(f"{uid}: matches zero series, so the guard is inert — check the "
                                  f"label spelling against translationStrategy: NoTranslation: {expr}")
 
-          for message in bad:
-              print(f"::error::{message}")
+          if os.environ.get("FINAL"):
+              for message in bad:
+                  print(f"::error::{message}")
           raise SystemExit(1 if bad else 0)
           PY
+          for i in $(seq 1 12); do
+            [ "$i" -lt 12 ] || export FINAL=1
+            python3 /tmp/check_rules.py && break
+            [ "$i" -lt 12 ] || fail "bundled alert rules do not match live data — see errors above"
+            sleep 10
+          done
           echo "bundled alert rules match live data"
 
           # 4. Nothing should be firing on a healthy stack. Same settling poll as
